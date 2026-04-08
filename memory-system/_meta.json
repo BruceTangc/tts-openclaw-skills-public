@@ -1,0 +1,43 @@
+{
+  "name": "memory-system",
+  "version": "1.1.0",
+  "description": "OpenClaw 记忆系统 - 整合 GitHub 20K+ Stars 记忆系统最佳实践 + DeepSeek 向量搜索",
+  "author": "brucetangc",
+  "homepage": "https://github.com/openclaw/openclaw",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BruceTangc/tts-openclaw-skills-public.git",
+    "directory": "memory-system"
+  },
+  "update": {
+    "enabled": true,
+    "checkCommand": "npm run check-updates",
+    "updateCommand": "npm run update",
+    "lastCheck": null,
+    "lastUpdate": null
+  },
+  "dependencies": {
+    "node": ">=18.0.0",
+    "bash": ">=4.0"
+  },
+  "changelog": {
+    "1.1.0": {
+      "date": "2026-04-08",
+      "changes": [
+        "整合 GitHub 20K+ Stars 记忆系统最佳实践",
+        "支持 DeepSeek 向量搜索",
+        "添加完整的备份脚本（GitHub/Aliyun/混合）",
+        "支持 dreaming 梦境整理功能",
+        "实现记忆提炼（promote）功能"
+      ]
+    },
+    "1.0.0": {
+      "date": "2026-04-01",
+      "changes": [
+        "初始版本",
+        "基础记忆读写功能",
+        "日常记忆和长期记忆分离"
+      ]
+    }
+  }
+}

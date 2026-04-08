@@ -1,0 +1,24 @@
+{
+  "name": "memory-system",
+  "version": "1.1.0",
+  "description": "OpenClaw 记忆系统 - 整合 GitHub 20K+ Stars 最佳实践 + DeepSeek 向量搜索",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js --test",
+    "check-updates": "node scripts/auto-update.sh --check",
+    "update": "node scripts/auto-update.sh --run"
+  },
+  "keywords": [
+    "openclaw",
+    "skill",
+    "memory",
+    "记忆系统"
+  ],
+  "author": "brucetangc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BruceTangc/tts-openclaw-skills-public.git",
+    "directory": "memory-system"
+  }
+}
