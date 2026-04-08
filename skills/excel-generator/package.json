@@ -1,0 +1,29 @@
+{
+  "name": "excel-generator",
+  "version": "1.0.0",
+  "description": "Create formatted Excel files with openpyxl and xlsxwriter",
+  "main": "index.js",
+  "scripts": {
+    "check-updates": "node scripts/check-updates.js",
+    "update": "node scripts/update-from-docs.js",
+    "test": "node scripts/test-all.js"
+  },
+  "keywords": [
+    "excel",
+    "xlsx",
+    "openpyxl",
+    "xlsxwriter",
+    "spreadsheet",
+    "openclaw",
+    "skill"
+  ],
+  "author": "brucetangc",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

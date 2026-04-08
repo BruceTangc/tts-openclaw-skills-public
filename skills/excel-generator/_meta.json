@@ -1,0 +1,35 @@
+{
+  "name": "excel-generator",
+  "version": "1.0.0",
+  "description": "Excel 文件生成工具，基于 openpyxl 和 xlsxwriter",
+  "author": "brucetangc",
+  "homepage": "https://openpyxl.readthedocs.io",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BruceTangc/tts-openclaw-skills-public.git",
+    "directory": "excel-generator"
+  },
+  "update": {
+    "enabled": true,
+    "checkCommand": "npm run check-updates",
+    "updateCommand": "npm run update",
+    "lastCheck": null,
+    "lastUpdate": null
+  },
+  "dependencies": {
+    "python": ">=3.8",
+    "openpyxl": ">=3.1.0",
+    "xlsxwriter": ">=3.1.0"
+  },
+  "changelog": {
+    "1.0.0": {
+      "date": "2026-04-07",
+      "changes": [
+        "初始版本",
+        "支持 create、from-data、style、chart 命令",
+        "结合 openpyxl 和 xlsxwriter 优势",
+        "实现自动更新功能"
+      ]
+    }
+  }
+}
