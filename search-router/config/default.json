@@ -1,0 +1,74 @@
+{
+  "tavily": {
+    "enabled": true,
+    "api_key": "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",
+    "base_url": "https://api.tavily.com"
+  },
+  "searxng": {
+    "enabled": true,
+    "url": "http://localhost:8080",
+    "timeout": 30000
+  },
+  "routing": {
+    "mode": "auto",
+    "strategies": {
+      "auto": {
+        "description": "智能路由，根据查询类型自动选择",
+        "rules": {
+          "realtime": "searxng",
+          "news": "searxng",
+          "technical": "tavily",
+          "research": "tavily",
+          "general": "both"
+        }
+      },
+      "tavily_only": {
+        "description": "只使用 Tavily"
+      },
+      "searxng_only": {
+        "description": "只使用 SearXNG"
+      },
+      "both": {
+        "description": "同时使用两个引擎，合并结果"
+      }
+    },
+    "default_strategy": "auto",
+    "fallback": {
+      "enabled": true,
+      "timeout_ms": 5000,
+      "description": "主引擎超时自动切换到备用引擎"
+    }
+  },
+  "query_classification": {
+    "realtime_keywords": [
+      "最新", "刚刚", "现在", "today", "now", "breaking",
+      "实时", "当前", "recent", "latest"
+    ],
+    "news_keywords": [
+      "新闻", "news", "报道", "report", "媒体", "media",
+      "头条", "headline", "事件", "event"
+    ],
+    "technical_keywords": [
+      "教程", "tutorial", "文档", "documentation", "API",
+      "代码", "code", "编程", "programming", "开发", "development",
+      "github", "npm", "package", "library", "framework"
+    ],
+    "research_keywords": [
+      "研究", "research", "分析", "analysis", "报告", "report",
+      "论文", "paper", "学术", "academic", "综述", "review",
+      "对比", "comparison", "趋势", "trend"
+    ],
+    "tavily_preferred_domains": [
+      "github.com",
+      "medium.com",
+      "dev.to",
+      "stackoverflow.com"
+    ]
+  },
+  "output": {
+    "format": "combined",
+    "max_results_per_engine": 5,
+    "deduplicate": true,
+    "show_engine_source": true
+  }
+}

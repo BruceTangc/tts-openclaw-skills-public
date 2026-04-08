@@ -1,0 +1,32 @@
+{
+  "name": "search-router",
+  "version": "1.0.0",
+  "description": "Smart Search Router - Intelligently route searches between Tavily and SearXNG",
+  "author": "brucetangc",
+  "license": "MIT-0",
+  "main": "index.js",
+  "scripts": {
+    "validate": "node scripts/validate-config.js",
+    "test": "node scripts/test-router.js",
+    "cache": "node scripts/cache-manager.js",
+    "cache:stats": "node scripts/cache-manager.js stats",
+    "cache:clear": "node scripts/cache-manager.js clear"
+  },
+  "dependencies": {},
+  "keywords": [
+    "search",
+    "router",
+    "tavily",
+    "searxng",
+    "openclaw",
+    "skill"
+  ],
+  "search_router": {
+    "api_version": "1.0.0",
+    "last_updated": "2026-04-05T13:30:00Z",
+    "engines": {
+      "tavily": { "enabled": true },
+      "searxng": { "enabled": true }
+    }
+  }
+}
