@@ -498,10 +498,43 @@ async function run(input) {
                 results.push({ phase: 'deep', summary: deepSummary });
             }
             
+            // 更新 DREAMS.md
+            const timestamp = new Date().toLocaleString('zh-CN');
+            const dreamsContent = `# DREAMS.md - 梦境日记
+
+> Dreaming: OpenClaw 记忆系统的梦境整理功能
+> 
+> 阶段：Light → REM → Deep
+> 状态：${timestamp} 已运行
+
+---
+
+## 🌙 梦境记录
+
+### Light 阶段 - 快速扫描
+\`\`\`
+${results.find(r => r.phase === 'light')?.summary || '未运行'}
+\`\`\`
+
+### REM 阶段 - 深度关联
+\`\`\`
+${results.find(r => r.phase === 'rem')?.summary || '未运行'}
+\`\`\`
+
+### Deep 阶段 - 生成摘要
+${results.find(r => r.phase === 'deep')?.summary || '未运行'}
+
+---
+
+*最后更新：${timestamp}*
+`;
+            fs.writeFileSync(dreamsPath, dreamsContent, 'utf-8');
+            
             return {
                 success: true,
                 message: `Dreaming ${phase} 阶段完成`,
-                results
+                results,
+                file: dreamsPath
             };
         }
         
