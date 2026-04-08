@@ -2,3 +2,9 @@ node_modules/
 *.log
 .cache/
 .DS_Store
+*.env
+*.env.local
+*.key
+*.secret
+*.token
+memory.config.json
