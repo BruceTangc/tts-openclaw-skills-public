@@ -1,0 +1,27 @@
+{
+  "name": "pdf-extractor",
+  "version": "1.0.0",
+  "description": "PyMuPDF-based PDF text extraction for OpenClaw",
+  "main": "index.js",
+  "scripts": {
+    "check-updates": "node scripts/check-updates.js",
+    "update": "node scripts/update-from-docs.js",
+    "test": "node scripts/test-extract.js"
+  },
+  "keywords": [
+    "pdf",
+    "extract",
+    "pymupdf",
+    "openclaw",
+    "skill"
+  ],
+  "author": "brucetangc",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
