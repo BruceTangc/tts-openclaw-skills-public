@@ -30,6 +30,10 @@ memory-system search --query "关键词"
 # 提炼记忆
 memory-system promote --apply --limit 5
 
+# 建立记忆索引（新增）
+memory-system index              # 普通索引
+memory-system index --force true # 强制重新索引
+
 # Dreaming 梦境整理
 memory-system dreaming --action run --phase all
 ```
@@ -49,6 +53,7 @@ memory-system dreaming --action run --phase all
 | `export` | `format`, `output` | 导出记忆 |
 | `stats` | - | 记忆统计 |
 | `dreaming` | `action`, `phase` | Dreaming 梦境整理 |
+| `index` | `force` | **建立记忆索引** ⭐ |
 
 ---
 

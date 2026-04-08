@@ -329,6 +329,27 @@ async function run(input) {
         return { success: false, error: '不支持的格式，使用 format=markdown' };
     }
     
+    // ========== index ==========
+    if (action === 'index') {
+        const force = params.force || false;
+        
+        const cmd = force ? 'openclaw memory index --force' : 'openclaw memory index';
+        const result = runCommand(cmd);
+        
+        if (result.success) {
+            return {
+                success: true,
+                message: '记忆索引已更新',
+                output: result.output
+            };
+        }
+        return {
+            success: false,
+            error: '索引失败',
+            details: result.error
+        };
+    }
+    
     // ========== stats ==========
     if (action === 'stats') {
         const memoryFilesList = fs.readdirSync(memoryDir).filter(f => f.endsWith('.md'));
@@ -511,7 +532,8 @@ async function run(input) {
                 'repair - 修复记忆系统 (cleanOld)',
                 'export - 导出记忆 (format=markdown, output)',
                 'stats - 记忆统计',
-                'dreaming - Dreaming 梦境整理 (action=status|enable|run)'
+                'dreaming - Dreaming 梦境整理 (action=status|enable|run)',
+                'index - 建立记忆索引 (force=true 强制重新索引)'
             ],
             examples: [
                 { action: 'status', desc: '查看状态' },
@@ -522,7 +544,8 @@ async function run(input) {
                 { action: 'repair', params: { cleanOld: true }, desc: '修复并清理' },
                 { action: 'dreaming', params: { action: 'status' }, desc: '查看 Dreaming 状态' },
                 { action: 'dreaming', params: { action: 'enable' }, desc: '启用 Dreaming' },
-                { action: 'dreaming', params: { action: 'run', phase: 'light' }, desc: '运行 Light 阶段' }
+                { action: 'dreaming', params: { action: 'run', phase: 'light' }, desc: '运行 Light 阶段' },
+                { action: 'index', params: { force: true }, desc: '强制重新索引' }
             ]
         }
     };
