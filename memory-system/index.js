@@ -108,7 +108,18 @@ async function run(input) {
         
         if (readType === 'daily') {
             const targetDate = readDate || getToday();
-            const result = readFile(path.join(memoryDir, `${targetDate}.md`));
+            const dailyPath = path.join(memoryDir, `${targetDate}.md`);
+            
+            // 检查文件是否存在
+            if (!fs.existsSync(dailyPath)) {
+                return { 
+                    success: false, 
+                    error: `日常记忆文件不存在：${targetDate}.md`,
+                    hint: '使用 write 命令先创建日常记录，或使用 stats 查看可用的日期'
+                };
+            }
+            
+            const result = readFile(dailyPath);
             if (result.success) {
                 return { success: true, content: result.content, type: 'daily', date: targetDate };
             }
