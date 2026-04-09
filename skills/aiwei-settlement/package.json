@@ -1,0 +1,12 @@
+{
+  "name": "艾威震源月底结算",
+  "version": "2.0.0",
+  "description": "从 ByWork PDF 工单压缩包自动生成 Excel（板材费用表 + 震源结算单）",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js --test"
+  },
+  "keywords": ["openclaw", "skill", "pdf", "excel", "工单", "结算", "震源", "艾威"],
+  "author": "brucetangc",
+  "license": "MIT"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "艾威震源月底结算",
+  "version": "2.0.0",
+  "description": "从 ByWork PDF 工单压缩包自动生成 Excel（板材费用表 + 震源结算单）",
+  "author": "brucetangc",
+  "homepage": "https://github.com/BruceTangc/tts-openclaw-skills-public",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BruceTangc/tts-openclaw-skills-public.git",
+    "directory": "skills/aiwei-settlement"
+  },
+  "changelog": {
+    "2.0.0": {
+      "date": "2026-04-09",
+      "changes": [
+        "更名为艾威震源月底结算",
+        "整合两种表格生成工具",
+        "支持压缩包自动解压",
+        "相同厚度自动累加"
+      ]
+    }
+  }
+}
