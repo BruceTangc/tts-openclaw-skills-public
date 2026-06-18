@@ -53,18 +53,20 @@ def extract_pdf_data(pdf_path):
                 break
             
             if in_plan_data:
-                if any(h in line for h in ['File name', 'Plan dimension', 'Sheet dimension', 'Cycles', 'Cutting time', 'Waste']):
+                # 表头可能跨行，如 "Number \nof \nparts"
+                header_keywords = ['File name', 'Plan dimension', 'Sheet dimension', 
+                                   'Cycles', 'Cutting time', 'Waste', 'Number', 'parts']
+                if any(k in line for k in header_keywords):
                     header_count += 1
                     continue
                 
-                if header_count >= 6 and line.strip():
+                # 至少 7 个表头后开始收集数据
+                if header_count >= 7 and line.strip():
                     data_lines.append(line)
         
         # 解析垂直排列的数据
-        # 数据顺序可能有两种：
-        # 1. 有 File name: [File name, Plan dimension, Sheet dimension, Cycles, Cutting time, Waste]
-        # 2. 无 File name: [Plan dimension, Sheet dimension, Cycles, Cutting time, Waste]
-        if len(data_lines) >= 5:
+        # 数据顺序：[Plan dimension, Sheet dimension, Cycles, Cutting time, Waste, Number of parts]
+        if len(data_lines) >= 6:
             # 查找 Sheet dimension（第一个带 x 的尺寸）
             sheet_idx = -1
             for i, line in enumerate(data_lines):
@@ -95,38 +97,217 @@ def extract_pdf_data(pdf_path):
                         if waste_match:
                             waste_rate = float(waste_match.group(1)) / 100
                     
+                    # Number of parts 在 Waste 后面（索引 +4）
+                    number_of_parts = 0
+                    if sheet_idx+4 < len(data_lines):
+                        parts_line = data_lines[sheet_idx+4]
+                        if parts_line.strip().isdigit():
+                            number_of_parts = int(parts_line)
+                    
                     results.append({
                         'thickness': thickness,
                         'length': length,
                         'width': width,
-                        'quantity': quantity,
+                        'quantity': quantity,  # 使用 Cycles（板材数量）
+                        'number_of_parts': number_of_parts,  # 零件数量（用于验证）
                         'waste_rate': waste_rate
                     })
     
     return results
 
 
+# ============================================================
+# 板材价格配置（2026 年 5 月更新，支持从 Excel 自动读取当月价格）
+# ============================================================
+# 当提供 --prices 参数时，自动从 Excel 读取当月采购价格
+# 未提供时使用下方硬编码价格作为 fallback
+# ============================================================
+
+MATERIAL_PRICES = {
+    # Q235 开平板（减薄后厚度→元/kg）- 与 Excel 显示一致
+    # 来源："26 年 6 月份板材价格" 表 col 37 "26年6月采购价格"
+    # 标称厚度→减薄后：3→2.75, 4→3.75, 5→4.75, 6→5.75, 8→7.75, 10→9.75, 12→11.75
+    'Q235': {
+        2.5: 3.883, 2.75: 3.863, 3.75: 3.783,
+        4.75: 3.743, 5.75: 3.743, 7.75: 3.743,
+        9.75: 3.743, 11.75: 3.743
+        # 13.75mm(14mm 标称) 价格表无数据，不填价格
+    },
+    # Q235 冷板（减薄后厚度→元/kg）
+    'Q235 冷板': {
+        1.0: 4.422, 1.5: 4.372, 2.0: 4.372,
+        2.5: 4.602
+    },
+    # Q345 锰板（减薄后厚度→元/kg）
+    # 标称厚度→减薄后：3→2.75, 4→3.75, 5→4.75, 6→5.75, 8→7.75, 10→9.75, 12→11.75
+    'Q345': {
+        2.75: 3.912, 3.75: 3.912, 4.75: 3.862,
+        5.75: 3.761, 7.75: 3.761, 9.75: 3.761,
+        11.75: 3.831
+    },
+}
+
+# 特殊材质固定价格（元/kg）
+SPECIAL_MATERIAL_PRICES = {
+    '镀锌板': 5.0,    # 固定价
+    'SUS': 16.0,      # 不锈钢
+    '不锈钢': 16.0,   # 不锈钢
+    '耐磨板': 6.0,    # 固定价
+    # 花纹板价格留空，不填
+}
+
+def read_prices_from_excel(excel_path):
+    """从板材价格 Excel 读取当月采购价格，返回 {材质: {减薄厚度: 单价}} 格式
+    
+    自动检测当月采购价格列（"XX月\n采购价格"），按材质和厚度提取价格。
+    价格单位：元/吨 → 转换为 元/kg（÷1000）
+    """
+    try:
+        import openpyxl as openpyxl_read
+        wb = openpyxl_read.load_workbook(excel_path, data_only=True)
+    except Exception as e:
+        print(f'⚠️ 无法读取价格文件 {excel_path}: {e}')
+        return None
+    
+    # 查找当月价格表（"XX年X月份板材价格"）
+    price_sheet = None
+    max_month = 0
+    for name in wb.sheetnames:
+        if '板材价格' in name:
+            # 提取月份："26年6月份板材价格" → 6
+            m = re.search(r'(\d+)年(\d+)月', name)
+            if m:
+                year = int(m.group(1))
+                month = int(m.group(2))
+                # 取最大月份（当月）
+                val = year * 100 + month
+                if val > max_month:
+                    max_month = val
+                    price_sheet = name
+    
+    if not price_sheet:
+        print(f'⚠️ 未找到板材价格表')
+        return None
+    
+    ws = wb[price_sheet]
+    print(f'📊 使用价格表: {price_sheet}')
+    
+    # 找采购价格列（"XX月\n采购价格" 或 "XX月\n采购价格"）
+    price_col = None
+    for col in range(1, ws.max_column + 1):
+        val = ws.cell(row=2, column=col).value
+        if val and isinstance(val, str) and '采购价格' in val:
+            price_col = col
+    
+    if not price_col:
+        print(f'⚠️ 未找到采购价格列')
+        return None
+    
+    # 材质→减薄厚度→价格 的映射
+    # Excel 中：Q235 开平板的厚度是减薄后的值（2.5, 3, 4, 4.75, 5.75, 7.75, 9.75, 11.75）
+    prices = {}
+    for row in range(3, ws.max_row + 1):
+        name_val = ws.cell(row=row, column=3).value  # C列：名称
+        thickness_val = ws.cell(row=row, column=6).value  # F列：厚度mm
+        price_val = ws.cell(row=row, column=price_col).value  # 采购价格列
+        
+        if not name_val or not thickness_val or not price_val:
+            continue
+        
+        name_str = str(name_val).strip()
+        try:
+            thickness = float(thickness_val)
+            price_per_ton = float(price_val)
+        except (ValueError, TypeError):
+            continue
+        
+        # 跳过无效价格（0、负数、非数字）
+        if price_per_ton <= 0 or price_per_ton > 100000:
+            continue
+        
+        price_per_kg = round(price_per_ton / 1000, 3)
+        
+        # 判断材质分类
+        if 'Q345' in name_str or '锰板' in name_str:
+            material = 'Q345'
+        elif '冷板' in name_str or 'ST12' in name_str:
+            material = 'Q235 冷板'
+        elif 'Q235' in name_str or '开平板' in name_str:
+            material = 'Q235'
+        else:
+            continue
+        
+        # Q235/Q345 标称厚度≥3mm 时减薄 0.25mm（与代码逻辑一致）
+        # Excel 中 4.75/5.75/7.75/9.75/11.75 已经是减薄后值，不需要再减
+        # 只对整数厚度（如 3, 4, 5, 6, 8, 10, 12）执行减薄
+        lookup_thickness = thickness
+        if material in ('Q235', 'Q345') and thickness >= 3 and thickness == int(thickness):
+            lookup_thickness = round(thickness - 0.25, 2)
+        
+        if material not in prices:
+            prices[material] = {}
+        prices[material][lookup_thickness] = price_per_kg
+    
+    # 打印读取结果
+    for mat, p in sorted(prices.items()):
+        items = ', '.join(f'{t}mm={v}' for t, v in sorted(p.items()))
+        print(f'  {mat}: {items}')
+    
+    return prices
+
+
+def get_price_per_kg(material, thickness, excel_prices=None):
+    """根据材质和厚度获取单价（元/公斤），无价格返回 None
+    
+    优先使用 Excel 当月价格，fallback 到硬编码价格。
+    """
+    # 特殊材质固定价格
+    if material in SPECIAL_MATERIAL_PRICES:
+        return SPECIAL_MATERIAL_PRICES[material]
+    
+    # 优先使用 Excel 价格
+    if excel_prices and material in excel_prices:
+        prices = excel_prices[material]
+        for t, price in prices.items():
+            if abs(t - thickness) < 0.01:
+                return price
+        return None
+    
+    # fallback 到硬编码价格
+    if material in MATERIAL_PRICES:
+        prices = MATERIAL_PRICES[material]
+        for t, price in prices.items():
+            if abs(t - thickness) < 0.01:
+                return price
+        return None
+    
+    return None
+
 def get_material_from_filename(pdf_file, thickness):
     """从文件名和厚度判断材质"""
-    if pdf_file.startswith('sus-'):
+    filename = os.path.basename(pdf_file).lower()
+    if filename.startswith('sus-'):
         return 'SUS'
-    elif pdf_file.startswith('dxb-'):
+    elif filename.startswith('dxb-'):
         return '镀锌板'
-    elif 'Mn' in pdf_file:
+    elif filename.startswith('hwb-') or 'hwb' in filename.lower():  # hwb = 花纹板
+        return '花纹板'
+    elif 'mn' in filename.lower():  # Mn 文件是 Q345
         return 'Q345'
+    elif thickness <= 2:
+        return 'Q235 冷板'
     else:
-        if thickness <= 2:
-            return 'Q235 冷板'
-        else:
-            return 'Q235'
+        return 'Q235'
 
 
-def create_material_cost_table(pdf_dir, output_file, contract_no):
+def create_material_cost_table(pdf_dir, output_file, contract_no, excel_prices=None):
     """生成板材费用计算表"""
     pdf_files = sorted(glob.glob(os.path.join(pdf_dir, '*.pdf')))
     
     # 提取所有 PDF 数据
     data_rows = []
+    errors = []  # 收集错误
+    
     for pdf_file in pdf_files:
         pdf_path = os.path.join(pdf_dir, pdf_file)
         results = extract_pdf_data(pdf_path)
@@ -134,14 +315,28 @@ def create_material_cost_table(pdf_dir, output_file, contract_no):
         material = get_material_from_filename(pdf_file, results[0]['thickness'] if results else 0)
         
         for result in results:
+            # 检查零件数量是否为 0
+            if result.get('number_of_parts', 0) == 0:
+                error_msg = f'{pdf_file} - Sheet {result["length"]}x{result["width"]}mm 的零件数量为 0'
+                errors.append(error_msg)
+            
             data_rows.append({
                 'material': material,
                 'length': result['length'],
                 'width': result['width'],
                 'thickness': result['thickness'],
                 'quantity': result['quantity'],
-                'waste_rate': result['waste_rate']
+                'waste_rate': result['waste_rate'],
+                'number_of_parts': result.get('number_of_parts', 0)
             })
+    
+    # 如果有错误，报错并退出
+    if errors:
+        print('\n❌ **错误：以下板材的零件数量为 0，请重新生成 PDF！**')
+        for err in errors:
+            print(f'  - {err}')
+        print('\n已终止生成，请修正后重试。')
+        sys.exit(1)
     
     # 排序：材质（Q235 冷板 → Q235 → Q345 → 其他），厚度从低到高
     material_order = {'Q235 冷板': 0, 'Q235': 1, 'Q345': 2}
@@ -187,13 +382,19 @@ def create_material_cost_table(pdf_dir, output_file, contract_no):
         # 厚（实际厚度：Q235/Q345 ≥3mm 时减 0.25mm）
         thickness = row_data['thickness']
         material = row_data['material']
+        display_thickness = thickness
         if material in ['Q235', 'Q235 冷板', 'Q345'] and thickness >= 3:
-            thickness = round(thickness - 0.25, 2)
-        ws.cell(row=i, column=7, value=thickness)
+            display_thickness = round(thickness - 0.25, 2)
+        ws.cell(row=i, column=7, value=display_thickness)
         # 数量
         ws.cell(row=i, column=8, value=row_data['quantity'])
         # 废料率
         ws.cell(row=i, column=15, value=row_data['waste_rate'])
+        
+        # 单价（元/公斤）- 根据材质和减薄后厚度查找
+        price_per_kg = get_price_per_kg(material, display_thickness, excel_prices)
+        if price_per_kg:
+            ws.cell(row=i, column=13, value=round(price_per_kg, 3))
         
         density_formula = f'IF(OR(D{i}="SUS",D{i}="不锈钢"),7.95,7.85)'
         ws.cell(row=i, column=9, value=f'=ROUND(E{i}*F{i}*G{i}/1000000*{density_formula},2)')
@@ -430,7 +631,7 @@ def create_zhenyuan_settlement(pdf_dir, output_file, contract_no):
     ws.cell(row=14, column=6).number_format = '0.0'
     
     # 数据行（只填充有数据的行，不留空白行）
-    standard_thickness = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12]
+    standard_thickness = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20]
     
     row = 15
     for thickness in standard_thickness:
@@ -511,19 +712,64 @@ def main():
     parser = argparse.ArgumentParser(description='从 PDF 工单生成 Excel')
     parser.add_argument('--pdf-dir', required=True, help='PDF 文件夹')
     parser.add_argument('--output', help='输出文件路径')
-    parser.add_argument('--contract', default='AW-25-3331', help='合同编号')
+    parser.add_argument('--contract', default=None, help='合同编号（默认从 pdf-dir 路径自动提取）')
     parser.add_argument('--type', choices=['material', 'settlement', 'both'], default='both')
+    parser.add_argument('--prices', help='板材价格 Excel 文件路径（自动读取当月采购价格）')
     
     args = parser.parse_args()
     
+    # Auto-detect contract number from PDF directory name if not specified
+    if not args.contract:
+        import os
+        dir_name = os.path.basename(args.pdf_dir.rstrip('/'))
+        # Match pattern like AW-26-0994
+        import re
+        match = re.search(r'(AW-\d{2}-\d{4})', dir_name)
+        if match:
+            args.contract = match.group(1)
+        else:
+            args.contract = dir_name
+    
+    # 从 Excel 读取当月价格
+    # 优先级：--prices 参数 > prices/ 目录下最新文件 > 硬编码 fallback
+    excel_prices = None
+    prices_source = None
+    
+    if args.prices:
+        # 用户指定了价格文件
+        prices_source = args.prices
+    else:
+        # 自动查找 prices/ 目录下最新的价格文件
+        prices_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'prices')
+        if os.path.isdir(prices_dir):
+            xlsx_files = glob.glob(os.path.join(prices_dir, '*.xlsx')) + glob.glob(os.path.join(prices_dir, '*.xls'))
+            if xlsx_files:
+                # 取最新修改时间的文件
+                prices_source = max(xlsx_files, key=os.path.getmtime)
+    
+    if prices_source:
+        excel_prices = read_prices_from_excel(prices_source)
+        if excel_prices:
+            print(f'✅ 已从 {prices_source} 读取当月价格')
+        else:
+            print(f'⚠️ 价格读取失败（{prices_source}），使用默认价格')
+    
     if args.type in ['material', 'both']:
-        output_material = args.output.replace('.xlsx', '_板材费用表.xlsx') if args.output else f'/tmp/{args.contract}_板材费用表.xlsx'
+        if args.output:
+            out_dir = os.path.dirname(args.output) or '.'
+            output_material = os.path.join(out_dir, f'{args.contract}_板材费用表.xlsx')
+        else:
+            output_material = f'/tmp/{args.contract}_板材费用表.xlsx'
         print(f'正在生成板材费用表...')
-        create_material_cost_table(args.pdf_dir, output_material, args.contract)
+        create_material_cost_table(args.pdf_dir, output_material, args.contract, excel_prices)
         print(f'✅ 板材费用表已生成：{output_material}')
     
     if args.type in ['settlement', 'both']:
-        output_settlement = args.output.replace('.xlsx', '_震源结算单.xlsx') if args.output else f'/tmp/{args.contract}_震源结算单.xlsx'
+        if args.output:
+            out_dir = os.path.dirname(args.output) or '.'
+            output_settlement = os.path.join(out_dir, f'{args.contract}_震源结算单.xlsx')
+        else:
+            output_settlement = f'/tmp/{args.contract}_震源结算单.xlsx'
         print(f'正在生成震源结算单...')
         create_zhenyuan_settlement(args.pdf_dir, output_settlement, args.contract)
         print(f'✅ 震源结算单已生成：{output_settlement}')
