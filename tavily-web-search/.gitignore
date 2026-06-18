@@ -3,6 +3,7 @@ node_modules/
 
 # 配置文件（包含 API Key）
 config/default.json
+config/api_key.txt # 本地 API Key 备份，勿提交
 
 # 日志
 *.log

@@ -85,6 +85,9 @@ function updateConfig(docsVersion) {
   console.log('📝 更新配置文件...');
   
   const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  if (!config.auto_update) {
+    config.auto_update = {};
+  }
   config.auto_update.last_check = new Date().toISOString();
   
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
@@ -128,13 +131,13 @@ function generateReport(changes) {
   }
   
   lines.push('');
-  lines.push('**已启用的功能**:',);
+  lines.push('**已启用的功能**:');
   lines.push('- ✅ search - 网页搜索');
   lines.push('- ✅ extract - 内容提取');
   lines.push('- ✅ usage - 用量查询');
   
   lines.push('');
-  lines.push('**已实现但未启用的功能**:,);
+  lines.push('**已实现但未启用的功能**:');
   lines.push('- ⏸️ crawl - 整站爬取');
   lines.push('- ⏸️ map - 站点地图');
   lines.push('- ⏸️ research - 深度研究');

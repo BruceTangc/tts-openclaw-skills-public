@@ -11,8 +11,8 @@ const formatter = require('../utils/formatter');
 async function run(params) {
   const { project_id } = params || {};
   
-  // 调用 API
-  const result = await api.usage();
+  // 调用 API（支持按项目查询）
+  const result = await api.usage({ project_id });
   
   // 格式化输出
   return formatter.formatUsage(result);

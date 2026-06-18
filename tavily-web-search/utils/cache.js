@@ -1,11 +1,12 @@
 /**
- * 简单的内存缓存
+ * 简单的内存缓存（带 TTL + 最大条目限制）
  */
 
 class Cache {
-  constructor(ttlMinutes = 5) {
+  constructor(ttlMinutes = 5, maxItems = 50) {
     this.store = new Map();
     this.ttl = ttlMinutes * 60 * 1000; // 转换为毫秒
+    this.maxItems = maxItems;
   }
 
   /**
@@ -13,6 +14,18 @@ class Cache {
    */
   _makeKey(prefix, data) {
     return `${prefix}:${JSON.stringify(data)}`;
+  }
+
+  /**
+   * 清理过期条目
+   */
+  _cleanExpired() {
+    const now = Date.now();
+    for (const [key, item] of this.store.entries()) {
+      if (now - item.timestamp > this.ttl) {
+        this.store.delete(key);
+      }
+    }
   }
 
   /**
@@ -38,6 +51,15 @@ class Cache {
    * 设置缓存
    */
   set(key, data) {
+    // 达到上限时清理过期条目，再删除最老的一条
+    if (this.store.size >= this.maxItems) {
+      this._cleanExpired();
+      if (this.store.size >= this.maxItems) {
+        const oldest = this.store.keys().next().value;
+        this.store.delete(oldest);
+      }
+    }
+    
     this.store.set(key, {
       data,
       timestamp: Date.now()
@@ -74,12 +96,12 @@ class Cache {
       }
     }
     
-    return { valid, expired, total: this.store.size };
+    return { valid, expired, total: this.store.size, maxItems: this.maxItems };
   }
 }
 
-// 创建全局缓存实例（5 分钟 TTL）
-const cache = new Cache(5);
+// 创建全局缓存实例（5 分钟 TTL，最多 50 条）
+const cache = new Cache(5, 50);
 
 module.exports = {
   Cache,

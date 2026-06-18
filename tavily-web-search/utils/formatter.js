@@ -8,6 +8,12 @@
 function formatSearchResults(result) {
   const lines = [];
   
+  // 查询回显
+  if (result.query) {
+    lines.push(`🔍 搜索：${result.query}`);
+    lines.push('');
+  }
+  
   // AI 答案（如果有）
   if (result.answer) {
     lines.push('🤖 **AI 答案**:');
@@ -21,23 +27,36 @@ function formatSearchResults(result) {
     lines.push('');
     
     result.results.forEach((item, index) => {
-      lines.push(`**${index + 1}. ${item.title}**`);
+      lines.push(`**${index + 1}. ${item.title || '无标题'}**`);
       lines.push(`   链接：${item.url}`);
+      if (item.favicon) {
+        lines.push(`   图标：${item.favicon}`);
+      }
       if (item.content) {
         lines.push(`   摘要：${item.content.substring(0, 200)}${item.content.length > 200 ? '...' : ''}`);
       }
       if (item.score) {
         lines.push(`   相关度：${(item.score * 100).toFixed(1)}%`);
       }
+      // 每个结果附带的图片（include_images 开启时）
+      if (item.images && item.images.length > 0) {
+        lines.push(`   🖼️ 图片：`);
+        item.images.slice(0, 3).forEach(img => {
+          lines.push(`   - ${img}`);
+        });
+      }
       lines.push('');
     });
+  } else if (!result.answer) {
+    return '🔍 未找到搜索结果';
   }
   
-  // 图片（如果有）
+  // 顶层图片（query 相关图片，非 per-result）
   if (result.images && result.images.length > 0) {
     lines.push('🖼️ **相关图片**:');
     result.images.forEach(img => {
-      lines.push(`- ${img.description || img.url}`);
+      const desc = img.description ? ` (${img.description})` : '';
+      lines.push(`- ${img.url}${desc}`);
     });
     lines.push('');
   }
@@ -48,6 +67,16 @@ function formatSearchResults(result) {
     result.follow_up_questions.forEach(q => {
       lines.push(`- ${q}`);
     });
+    lines.push('');
+  }
+  
+  // 用量信息
+  if (result.usage) {
+    lines.push('📊 **本次搜索用量**');
+    if (result.usage.credits_used !== undefined) {
+      lines.push(`- 消耗：${result.usage.credits_used} credits`);
+    }
+    lines.push('');
   }
   
   return lines.join('\n') || '未找到结果';
@@ -62,6 +91,9 @@ function formatExtractResults(result) {
   if (result.results) {
     result.results.forEach(item => {
       lines.push(`📄 **${item.url}**`);
+      if (item.favicon) {
+        lines.push(`   图标：${item.favicon}`);
+      }
       lines.push('');
       
       if (item.raw_content) {
@@ -70,8 +102,25 @@ function formatExtractResults(result) {
         lines.push('⚠️ 未提取到内容');
       }
       
+      if (item.images && item.images.length > 0) {
+        lines.push('');
+        lines.push('🖼️ **页面图片**:');
+        item.images.forEach(img => {
+          lines.push(`- ${img}`);
+        });
+      }
+      
       lines.push('');
     });
+  }
+  
+  // 用量信息
+  if (result.usage) {
+    lines.push('📊 **本次提取用量**');
+    if (result.usage.credits_used !== undefined) {
+      lines.push(`- 消耗：${result.usage.credits_used} credits`);
+    }
+    lines.push('');
   }
   
   return lines.join('\n') || '未找到结果';

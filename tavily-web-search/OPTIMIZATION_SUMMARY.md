@@ -186,7 +186,7 @@ npm run validate
 ✅ 配置验证通过！
 
 **配置摘要**:
-  - API Key: tvly-dev-1GnlZH...
+  - API Key: tvly-dev-xxx（通过环境变量配置）
   - Base URL: https://api.tavily.com
   - 已启用命令：search, extract, usage
 
