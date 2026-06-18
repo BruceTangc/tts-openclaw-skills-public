@@ -17,8 +17,10 @@ Usage:
 import argparse
 import json
 import os
+import sys
 import glob
 import random
+import re
 import string
 from datetime import datetime, timedelta
 
@@ -36,17 +38,23 @@ LEARNINGS_DIR = os.path.join(WORKSPACE, ".learnings")
 def ensure_trail():
     """Ensure learning trail exists with defaults."""
     default = {
-        "version": 2,
+        "version": 3,
         "last_cycle": None,
         "entries": [],       # LRN, ERR, FEAT entries
         "changes": [],       # Applied changes with verification
         "watchlist": [],     # Pattern tracking
         "principles": [],    # Distilled principles
+        "graph": {           # Knowledge graph
+            "nodes": [],     # event, lesson, principle, knowledge, pattern
+            "edges": [],     # connections between nodes
+        },
         "stats": {
             "total_entries": 0,
             "total_changes": 0,
             "verified_ok": 0,
             "reverted": 0,
+            "total_nodes": 0,
+            "total_edges": 0,
         },
     }
     if not os.path.exists(LEARNING_TRAIL_PATH):
@@ -56,7 +64,13 @@ def ensure_trail():
         return default
     try:
         with open(LEARNING_TRAIL_PATH) as f:
-            return json.load(f)
+            trail = json.load(f)
+        # Migrate: add graph if missing
+        if "graph" not in trail:
+            trail["graph"] = {"nodes": [], "edges": []}
+            trail["version"] = 3
+            save_trail(trail)
+        return trail
     except (json.JSONDecodeError, FileNotFoundError):
         with open(LEARNING_TRAIL_PATH, "w") as f:
             json.dump(default, f, indent=2)
@@ -125,26 +139,595 @@ def check_memory_retention(trail):
     return expired
 
 
+# ── Conversation Scoring ────────────────────────────────────────
+
+def score_conversation(trail, accuracy=0, usefulness=0, efficiency=0, tone=0, proactiveness=0, notes=""):
+    """Score a conversation on 5 dimensions (0-10)."""
+    now = datetime.now()
+    score = {
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "scores": {
+            "accuracy": accuracy,
+            "usefulness": usefulness,
+            "efficiency": efficiency,
+            "tone": tone,
+            "proactiveness": proactiveness,
+        },
+        "average": round((accuracy + usefulness + efficiency + tone + proactiveness) / 5, 1),
+        "notes": notes[:200],
+    }
+    trail.setdefault("scores", []).append(score)
+    trail["stats"]["total_scores"] = trail["stats"].get("total_scores", 0) + 1
+    save_trail(trail)
+    print(f"📊 Scored: avg={score['average']}/10 (acc={accuracy} use={usefulness} eff={efficiency} ton={tone} pro={proactiveness})")
+    return score
+
+
+def show_score_trends(trail, days=7):
+    """Show score trends for the last N days."""
+    scores = trail.get("scores", [])
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    recent = [s for s in scores if s.get("date", "") >= cutoff]
+
+    if not recent:
+        print(f"No scores in the last {days} days.")
+        return
+
+    # Group by date
+    by_date = {}
+    for s in recent:
+        d = s["date"]
+        if d not in by_date:
+            by_date[d] = []
+        by_date[d].append(s)
+
+    print(f"\n📈 Score Trends (last {days} days, {len(recent)} scores):\n")
+    print(f"  {'Date':<12} {'Avg':>5} {'Acc':>4} {'Use':>4} {'Eff':>4} {'Ton':>4} {'Pro':>4}")
+    print(f"  {'─'*40}")
+
+    daily_avgs = []
+    for date in sorted(by_date.keys()):
+        day_scores = by_date[date]
+        avg = sum(s["average"] for s in day_scores) / len(day_scores)
+        s0 = day_scores[0]
+        sc = s0["scores"]
+        daily_avgs.append(avg)
+        print(f"  {date:<12} {avg:>5.1f} {sc['accuracy']:>4} {sc['usefulness']:>4} {sc['efficiency']:>4} {sc['tone']:>4} {sc['proactiveness']:>4}")
+
+    if len(daily_avgs) >= 2:
+        trend = daily_avgs[-1] - daily_avgs[0]
+        arrow = "↑" if trend > 0.5 else "↓" if trend < -0.5 else "→"
+        print(f"\n  Trend: {arrow} ({daily_avgs[0]:.1f} → {daily_avgs[-1]:.1f})")
+
+
+# ── Dynamic Memory Injection ────────────────────────────────────
+
+TOPIC_KEYWORDS = {
+    "weather": ["天气", "温度", "wind", "rain", "预报", "湿度", "气压"],
+    "code": ["代码", "script", "python", "bug", "fix", "error", "代码"],
+    "finance": ["金融", "股票", "stock", "交易", "东方财富", "mx"],
+    "skill": ["skill", "skill", "clawhub", "技能"],
+    "learning": ["improve", "learn", "reflect", "self-improvement", "学习", "改进"],
+    "memory": ["memory", "remember", "recall", "记忆", "回想"],
+    "browser": ["browser", "playwright", "自动化", "浏览器"],
+    "config": ["config", "配置", "setup", "安装", "API", "key"],
+    "general": ["general", "你好", "谢谢", "ok", "好的"],
+}
+
+
+def detect_topic(text):
+    """Detect topic from text."""
+    text_lower = text.lower()
+    scores = {}
+    for topic, keywords in TOPIC_KEYWORDS.items():
+        count = sum(1 for kw in keywords if kw.lower() in text_lower)
+        if count > 0:
+            scores[topic] = count
+    if scores:
+        return max(scores, key=scores.get)
+    return "general"
+
+
+def build_memory_index(trail, days=30):
+    """Build a topic-indexed memory index from daily logs."""
+    index = {}
+    cutoff = datetime.now() - timedelta(days=days)
+
+    for f in sorted(glob.glob(os.path.join(MEMORY_DIR, "*.md")), reverse=True):
+        if ".dreams" in f:
+            continue
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(f))
+            if mtime < cutoff:
+                continue
+            with open(f) as fh:
+                content = fh.read()
+            date = os.path.basename(f).replace(".md", "")
+            topic = detect_topic(content)
+            if topic not in index:
+                index[topic] = []
+            # Extract first few meaningful lines
+            lines = [l.strip() for l in content.split("\n") if l.strip() and not l.startswith("#")][:3]
+            index[topic].append({"date": date, "file": os.path.relpath(f, WORKSPACE), "summary": lines})
+        except OSError:
+            pass
+
+    # Save index
+    index_path = os.path.join(MEMORY_DIR, ".memory-index.json")
+    with open(index_path, "w") as f:
+        json.dump({"built": datetime.now().isoformat(), "index": index}, f, indent=2, ensure_ascii=False)
+
+    return index
+
+
+def query_topic_memory(topic, limit=3):
+    """Query memory for a specific topic."""
+    index_path = os.path.join(MEMORY_DIR, ".memory-index.json")
+    if not os.path.exists(index_path):
+        build_memory_index({})
+
+    with open(index_path) as f:
+        data = json.load(f)
+
+    index = data.get("index", {})
+    results = index.get(topic, [])
+    return results[:limit]
+
+
+# ── Knowledge Graph ─────────────────────────────────────────────
+
+NODE_TYPES = ["event", "lesson", "principle", "knowledge", "pattern"]
+EDGE_TYPES = ["caused_by", "led_to", "supports", "contradicts", "related_to", "derived_from"]
+
+
+def create_graph_node(trail, node_type, content, tags=None, source=None):
+    """Create a node in the knowledge graph."""
+    if node_type not in NODE_TYPES:
+        print(f"⚠️  Unknown node type: {node_type} (use: {', '.join(NODE_TYPES)})")
+        return None
+
+    now = datetime.now()
+    node_id = f"{node_type[:3]}-{now.strftime('%Y%m%d')}-{len(trail['graph']['nodes'])+1:03d}"
+
+    node = {
+        "id": node_id,
+        "type": node_type,
+        "content": content[:200],
+        "tags": tags or [],
+        "source": source or "manual",
+        "created": now.isoformat(),
+        "updated": now.isoformat(),
+        "confidence": 1.0 if node_type == "event" else 0.5,
+    }
+
+    trail["graph"]["nodes"].append(node)
+    trail["stats"]["total_nodes"] = trail["stats"].get("total_nodes", 0) + 1
+    save_trail(trail)
+    print(f"🔷 Node created: [{node_id}] ({node_type}) {content[:60]}")
+    return node_id
+
+
+def create_graph_edge(trail, from_id, to_id, edge_type, properties=None):
+    """Create an edge between two nodes."""
+    if edge_type not in EDGE_TYPES:
+        print(f"⚠️  Unknown edge type: {edge_type} (use: {', '.join(EDGE_TYPES)})")
+        return None
+
+    # Verify nodes exist
+    node_ids = [n["id"] for n in trail["graph"]["nodes"]]
+    if from_id not in node_ids:
+        print(f"⚠️  Source node not found: {from_id}")
+        return None
+    if to_id not in node_ids:
+        print(f"⚠️  Target node not found: {to_id}")
+        return None
+
+    edge = {
+        "from": from_id,
+        "to": to_id,
+        "type": edge_type,
+        "properties": properties or {},
+        "created": datetime.now().isoformat(),
+    }
+
+    trail["graph"]["edges"].append(edge)
+    trail["stats"]["total_edges"] = trail["stats"].get("total_edges", 0) + 1
+    save_trail(trail)
+    print(f"🔗 Edge created: [{from_id}] → [{to_id}] ({edge_type})")
+    return edge
+
+
+def query_graph(trail, node_id=None, node_type=None, tag=None, depth=1):
+    """Query the knowledge graph."""
+    nodes = trail["graph"]["nodes"]
+    edges = trail["graph"]["edges"]
+
+    # Find starting node(s)
+    if node_id:
+        start_nodes = [n for n in nodes if n["id"] == node_id]
+    elif node_type:
+        start_nodes = [n for n in nodes if n["type"] == node_type]
+    elif tag:
+        start_nodes = [n for n in nodes if tag in n.get("tags", [])]
+    else:
+        start_nodes = nodes
+
+    if not start_nodes:
+        print("No nodes found matching query.")
+        return []
+
+    # BFS up to depth
+    visited = set()
+    result_nodes = []
+    result_edges = []
+    queue = [(n, 0) for n in start_nodes]
+
+    while queue:
+        node, d = queue.pop(0)
+        if node["id"] in visited:
+            continue
+        visited.add(node["id"])
+        result_nodes.append(node)
+
+        if d < depth:
+            # Find connected nodes
+            for edge in edges:
+                if edge["from"] == node["id"]:
+                    target = next((n for n in nodes if n["id"] == edge["to"]), None)
+                    if target and target["id"] not in visited:
+                        result_edges.append(edge)
+                        queue.append((target, d + 1))
+                elif edge["to"] == node["id"]:
+                    source = next((n for n in nodes if n["id"] == edge["from"]), None)
+                    if source and source["id"] not in visited:
+                        result_edges.append(edge)
+                        queue.append((source, d + 1))
+
+    return result_nodes, result_edges
+
+
+def print_graph(trail, node_id=None, node_type=None, tag=None, depth=1):
+    """Print the knowledge graph in a readable format."""
+    result = query_graph(trail, node_id, node_type, tag, depth)
+    if not result or not result[0]:
+        print("No nodes found.")
+        return
+
+    nodes, edges = result
+
+    print(f"\n🕸️  Knowledge Graph ({len(nodes)} nodes, {len(edges)} edges):\n")
+
+    # Print nodes grouped by type
+    by_type = {}
+    for n in nodes:
+        t = n["type"]
+        if t not in by_type:
+            by_type[t] = []
+        by_type[t].append(n)
+
+    type_icons = {"event": "📌", "lesson": "💡", "principle": "📜", "knowledge": "📖", "pattern": "🔍"}
+
+    for t in NODE_TYPES:
+        if t in by_type:
+            icon = type_icons.get(t, "•")
+            print(f"  {icon} {t.upper()}s ({len(by_type[t])}):")
+            for n in by_type[t]:
+                tags_str = " " + ", ".join(n.get("tags", [])) if n.get("tags") else ""
+                print(f"    [{n['id']}] {n['content'][:60]}{tags_str}")
+                if n.get("confidence"):
+                    print(f"           confidence: {n['confidence']:.1f}")
+
+    # Print edges
+    if edges:
+        print(f"\n  🔗 Edges:")
+        for e in edges:
+            src = next((n for n in nodes if n["id"] == e["from"]), None)
+            tgt = next((n for n in nodes if n["id"] == e["to"]), None)
+            src_content = src["content"][:30] if src else e["from"]
+            tgt_content = tgt["content"][:30] if tgt else e["to"]
+            print(f"    {src_content}... ──{e['type']}──► {tgt_content}...")
+
+
+def auto_link_graph(trail, new_node_id, content):
+    """Auto-link a new node to existing nodes based on content similarity."""
+    nodes = trail["graph"]["nodes"]
+    new_lower = content.lower()
+
+    linked = []
+    for node in nodes:
+        if node["id"] == new_node_id:
+            continue
+        node_lower = node["content"].lower()
+
+        # Simple keyword overlap scoring
+        new_words = set(new_lower.replace("'", "").split())
+        node_words = set(node_lower.replace("'", "").split())
+        overlap = new_words & node_words
+
+        # Skip common words
+        skip_words = {"the", "and", "for", "to", "in", "of", "a", "is", "not", "use", "should", "instead", "read", "tool"}
+        overlap = overlap - skip_words
+
+        if len(overlap) >= 2:
+            edge_type = "related_to"
+            if node["type"] == "event" and overlap & {"error", "fail", "wrong", "instead"}:
+                edge_type = "caused_by"
+            elif node["type"] == "lesson" and overlap & {"should", "prefer", "use"}:
+                edge_type = "supports"
+            elif node["type"] == "principle" and overlap & {"not", "instead", "rather"}:
+                edge_type = "contradicts"
+
+            create_graph_edge(trail, new_node_id, node["id"], edge_type)
+            linked.append(node["id"])
+
+    return linked
+
+
+# ── Semantic Deduplication ──────────────────────────────────────
+
+def _tokenize(text):
+    """Simple tokenizer: split on whitespace/punctuation, lowercase."""
+    import re
+    # Split on non-word chars (works for both English and Chinese)
+    tokens = re.findall(r'[\w\u4e00-\u9fff]+', text.lower())
+    # For Chinese text, use character bigrams (no spaces between words)
+    result = []
+    for token in tokens:
+        if any('\u4e00' <= c <= '\u9fff' for c in token):
+            # Chinese: use character bigrams
+            for i in range(len(token) - 1):
+                result.append(token[i:i+2])
+            result.append(token)  # Also add full token
+        else:
+            result.append(token)
+    return result
+
+
+def _build_tfidf(texts):
+    """Build TF-IDF vectors from a list of texts using numpy."""
+    import math
+    
+    # Tokenize all texts
+    tokenized = [_tokenize(t) for t in texts]
+    
+    # Build vocabulary
+    vocab = {}
+    for tokens in tokenized:
+        for t in tokens:
+            if t not in vocab:
+                vocab[t] = len(vocab)
+    
+    if not vocab:
+        return [], {}
+    
+    vocab_size = len(vocab)
+    n_docs = len(texts)
+    
+    # Compute TF
+    tf = [[0.0] * vocab_size for _ in range(n_docs)]
+    for i, tokens in enumerate(tokenized):
+        for t in tokens:
+            tf[i][vocab[t]] += 1.0
+        # Normalize by document length
+        if tokens:
+            for j in range(vocab_size):
+                tf[i][j] /= len(tokens)
+    
+    # Compute IDF
+    idf = [0.0] * vocab_size
+    for j in range(vocab_size):
+        df = sum(1 for tokens in tokenized if any(vocab[t] == j for t in tokens))
+        idf[j] = math.log((n_docs + 1) / (df + 1)) + 1
+    
+    # Compute TF-IDF
+    tfidf = [[0.0] * vocab_size for _ in range(n_docs)]
+    for i in range(n_docs):
+        for j in range(vocab_size):
+            tfidf[i][j] = tf[i][j] * idf[j]
+    
+    return tfidf, vocab
+
+
+def _cosine_similarity(v1, v2):
+    """Compute cosine similarity between two vectors."""
+    import math
+    dot = sum(a * b for a, b in zip(v1, v2))
+    norm1 = math.sqrt(sum(a * a for a in v1))
+    norm2 = math.sqrt(sum(b * b for b in v2))
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return dot / (norm1 * norm2)
+
+
+def semantic_dedup(trail, threshold=0.85):
+    """Find semantically duplicate nodes using TF-IDF cosine similarity."""
+    nodes = trail["graph"]["nodes"]
+    if len(nodes) < 2:
+        return []
+    
+    # Build TF-IDF for all node contents
+    texts = [n["content"] for n in nodes]
+    tfidf, vocab = _build_tfidf(texts)
+    
+    if not tfidf:
+        return []
+    
+    # Find pairs with high similarity
+    duplicates = []
+    for i in range(len(nodes)):
+        for j in range(i + 1, len(nodes)):
+            sim = _cosine_similarity(tfidf[i], tfidf[j])
+            if sim >= threshold:
+                duplicates.append({
+                    "node_a": nodes[i]["id"],
+                    "node_b": nodes[j]["id"],
+                    "similarity": round(sim, 3),
+                    "content_a": nodes[i]["content"][:60],
+                    "content_b": nodes[j]["content"][:60],
+                })
+    
+    return duplicates
+
+
+def merge_duplicate_nodes(trail, dup):
+    """Merge two duplicate nodes, keeping the one with more edges."""
+    nodes = trail["graph"]["nodes"]
+    edges = trail["graph"]["edges"]
+    
+    node_a = next((n for n in nodes if n["id"] == dup["node_a"]), None)
+    node_b = next((n for n in nodes if n["id"] == dup["node_b"]), None)
+    
+    if not node_a or not node_b:
+        return None
+    
+    # Keep the node with more connections
+    edges_a = sum(1 for e in edges if e["from"] == node_a["id"] or e["to"] == node_a["id"])
+    edges_b = sum(1 for e in edges if e["from"] == node_b["id"] or e["to"] == node_b["id"])
+    
+    keep_id = node_a["id"] if edges_a >= edges_b else node_b["id"]
+    remove_id = node_b["id"] if edges_a >= edges_b else node_a["id"]
+    
+    # Remove the node and its edges
+    nodes[:] = [n for n in nodes if n["id"] != remove_id]
+    edges[:] = [e for e in edges if e["from"] != remove_id and e["to"] != remove_id]
+    
+    trail["stats"]["merged"] = trail["stats"].get("merged", 0) + 1
+    save_trail(trail)
+    
+    print(f"🔀 Merged [{remove_id}] → [{keep_id}] (similarity: {dup['similarity']})")
+    return {"kept": keep_id, "removed": remove_id, "similarity": dup["similarity"]}
+
+
+# ── Personalized PageRank ───────────────────────────────────────
+
+def personalized_pagerank(trail, query_text, damping=0.85, iterations=20):
+    """Compute Personalized PageRank for graph nodes based on query relevance."""
+    import math
+    
+    nodes = trail["graph"]["nodes"]
+    edges = trail["graph"]["edges"]
+    
+    if not nodes:
+        return []
+    
+    n = len(nodes)
+    node_ids = [n["id"] for n in nodes]
+    id_to_idx = {nid: i for i, nid in enumerate(node_ids)}
+    
+    # Build adjacency matrix
+    adj = [[0.0] * n for _ in range(n)]
+    for e in edges:
+        if e["from"] in id_to_idx and e["to"] in id_to_idx:
+            adj[id_to_idx[e["from"]]][id_to_idx[e["to"]]] = 1.0
+    
+    # Compute personalization vector based on query similarity
+    personalization = [0.0] * n
+    query_tokens = set(_tokenize(query_text))
+    
+    for i, node in enumerate(nodes):
+        node_tokens = set(_tokenize(node["content"]))
+        overlap = query_tokens & node_tokens
+        skip_words = {"the", "and", "for", "to", "in", "of", "a", "is", "not"}
+        overlap = overlap - skip_words
+        personalization[i] = len(overlap) + 0.01  # Small base for all nodes
+    
+    # Normalize personalization
+    total_p = sum(personalization)
+    if total_p > 0:
+        personalization = [p / total_p for p in personalization]
+    else:
+        personalization = [1.0 / n] * n
+    
+    # Compute PageRank
+    pagerank = [1.0 / n] * n
+    
+    for _ in range(iterations):
+        new_pagerank = [0.0] * n
+        for j in range(n):
+            for i in range(n):
+                if adj[i][j] > 0:
+                    # Sum of outgoing edges from node i
+                    out_degree = sum(adj[i])
+                    if out_degree > 0:
+                        new_pagerank[j] += pagerank[i] * adj[i][j] / out_degree
+        
+        # Apply damping and personalization
+        for i in range(n):
+            pagerank[i] = (1 - damping) * personalization[i] + damping * new_pagerank[i]
+    
+    # Sort by PageRank score
+    ranked = sorted(zip(node_ids, pagerank), key=lambda x: x[1], reverse=True)
+    return [(nid, round(score, 4)) for nid, score in ranked]
+
+
+def query_graph_ranked(trail, query_text, top_k=5, depth=2):
+    """Query graph and return nodes ranked by Personalized PageRank."""
+    ranked = personalized_pagerank(trail, query_text)
+    
+    nodes = trail["graph"]["nodes"]
+    edges = trail["graph"]["edges"]
+    
+    result = []
+    for node_id, score in ranked[:top_k]:
+        node = next((n for n in nodes if n["id"] == node_id), None)
+        if node:
+            # Find related edges
+            related_edges = [e for e in edges if e["from"] == node_id or e["to"] == node_id]
+            result.append({
+                "node": node,
+                "score": score,
+                "edges": related_edges,
+            })
+    
+    return result
+
+
+def print_ranked_graph(trail, query_text, top_k=5):
+    """Print ranked graph results."""
+    results = query_graph_ranked(trail, query_text, top_k)
+    
+    if not results:
+        print("No nodes found in graph.")
+        return
+    
+    type_icons = {"event": "📌", "lesson": "💡", "principle": "📜", "knowledge": "📖", "pattern": "🔍"}
+    
+    print(f"\n🕸️  Graph ranked by: '{query_text}'\n")
+    
+    for i, r in enumerate(results, 1):
+        node = r["node"]
+        icon = type_icons.get(node["type"], "•")
+        print(f"  {i}. {icon} [{node['id']}] (score: {r['score']:.4f})")
+        print(f"     {node['content'][:80]}")
+        if r["edges"]:
+            for e in r["edges"][:3]:
+                other = e["to"] if e["from"] == node["id"] else e["from"]
+                direction = "→" if e["from"] == node["id"] else "←"
+                print(f"     {direction} {e['type']} → [{other}]")
+        print()
+
+
 # ── Detection triggers ──────────────────────────────────────────
-    """Generate next ID: LRN-20260505-001, ERR-20260505-A7B, etc."""
+
+def next_id(trail, prefix):
+    """Generate next ID: LRN-YYYYMMDD-001, etc."""
     today = datetime.now().strftime("%Y%m%d")
     existing = [
         e["id"] for e in trail.get("entries", [])
         if e["id"].startswith(f"{prefix}-{today}")
     ]
-    if existing:
-        nums = []
-        for eid in existing:
-            try:
-                nums.append(int(eid.split("-")[-1]))
-            except ValueError:
-                pass
-        if nums:
-            next_num = max(nums) + 1
-        else:
-            next_num = 1
+    nums = []
+    for eid in existing:
+        suffix = eid.split("-")[-1]
+        try:
+            nums.append(int(suffix))
+        except ValueError:
+            pass  # skip non-numeric suffixes like SI1
+    if nums:
+        next_num = max(nums) + 1
     else:
-        next_num = 1
+        next_num = len(existing) + 1  # fallback: sequential from count
     return f"{prefix}-{today}-{next_num:03d}"
 
 
@@ -203,7 +786,13 @@ def log_entry(trail, entry_type, summary, area="tooling",
 
     # New entry
     trail.setdefault("entries", []).append(entry)
-    trail["stats"]["total_entries"] = trail["stats"].get("total_entries", 0) + 1
+    # Recalculate stats from actual data
+    trail["stats"]["total_entries"] = len(trail["entries"])
+    trail["stats"]["total_scores"] = len(trail.get("scores", []))
+    if "total_nodes" in trail.get("stats", {}):
+        trail["stats"]["total_nodes"] = len(trail.get("graph", {}).get("nodes", []))
+    if "total_edges" in trail.get("stats", {}):
+        trail["stats"]["total_edges"] = len(trail.get("graph", {}).get("edges", []))
     save_trail(trail)
     print(f"📝 [{eid}] {summary[:60]}")
     return eid
@@ -374,8 +963,9 @@ def auto_revert_failed(trail, max_retries=2):
     return reverted
 
 
-def find_patterns_ready(trail):
-    """Find patterns with Recurrence-Count >= 3 across 2+ sessions."""
+def find_patterns_ready(trail, min_recurrence=2, min_sessions=2):
+    """Find patterns with Recurrence-Count >= min_recurrence across min_sessions.
+    Excludes patterns where all entries are already resolved or promoted."""
     ready = []
     entries = trail.get("entries", [])
     sessions_seen = {}
@@ -384,20 +974,254 @@ def find_patterns_ready(trail):
         pk = e.get("pattern_key")
         if not pk:
             continue
+        # Skip already-resolved entries (but still count them for recurrence)
+        if e.get("status") in ("wont_fix",):
+            continue
         rc = e.get("recurrence_count", 0)
         if pk not in sessions_seen:
-            sessions_seen[pk] = {"count": 0, "dates": set()}
+            sessions_seen[pk] = {"count": 0, "dates": set(), "entries": [], "all_resolved": True}
         sessions_seen[pk]["count"] = max(sessions_seen[pk]["count"], rc)
         sessions_seen[pk]["dates"].add(e.get("last_seen", ""))
+        sessions_seen[pk]["entries"].append(e)
+        if e.get("status") not in ("promoted", "resolved"):
+            sessions_seen[pk]["all_resolved"] = False
 
     for pk, data in sessions_seen.items():
-        if data["count"] >= 3 and len(data["dates"]) >= 2:
-            # Find the entry with this pattern_key
-            for e in entries:
-                if e.get("pattern_key") == pk:
-                    ready.append(e)
-                    break
+        if data["all_resolved"]:
+            continue  # Pattern already handled
+        if data["count"] >= min_recurrence and len(data["dates"]) >= min_sessions:
+            # Use the most recent non-resolved entry for this pattern
+            active = [e for e in data["entries"] if e.get("status") not in ("promoted", "resolved")]
+            if not active:
+                active = data["entries"]
+            entries_sorted = sorted(active, key=lambda e: e.get("last_seen", ""), reverse=True)
+            ready.append((pk, data["count"], entries_sorted[0]))
     return ready
+
+
+def execute_promotion(trail, pattern_key, count, entry):
+    """Actually promote a pattern by modifying the target file and recording a change for verification."""
+    target = suggest_promotion(entry)
+    summary = entry.get("summary", "")
+    target_path = os.path.join(WORKSPACE, target)
+
+    # Build the content to append
+    now = datetime.now()
+    if target == "MEMORY.md":
+        line = f"- {summary}"
+        section = "## Self-Improvement Principles"
+    elif target == "TOOLS.md":
+        line = f"- {summary}"
+        section = "## Known Gotchas"
+    elif target == "AGENTS.md":
+        line = f"- {summary}"
+        section = "## Red Lines"
+    elif target == "SOUL.md":
+        line = f"- {summary}"
+        section = "## Boundaries"
+    else:
+        line = f"- {summary}"
+        section = None
+
+    # Read current file content
+    try:
+        with open(target_path, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = ""
+
+    # Check if this line already exists
+    if line in content:
+        print(f"   ⏭️  Already in {target}: {line[:60]}")
+        entry["status"] = "promoted"
+        save_trail(trail)
+        return None
+
+    # Append to the appropriate section
+    if section and section in content:
+        # Find the section and append after first line after section header
+        lines = content.split("\n")
+        section_idx = None
+        for i, l in enumerate(lines):
+            if l.strip() == section:
+                section_idx = i
+                break
+        if section_idx is not None:
+            lines.insert(section_idx + 1, line)
+            new_content = "\n".join(lines)
+        else:
+            new_content = content + "\n" + line + "\n"
+    else:
+        new_content = content + "\n" + line + "\n"
+
+    # Write the file
+    with open(target_path, "w") as f:
+        f.write(new_content)
+
+    # Record change for verification
+    hypothesis = f"Promoting pattern '{pattern_key}' ({count}x) to {target} will improve consistency"
+    record_change(trail, target, summary, hypothesis, source_entry=entry["id"],
+                  change_type="pattern_promotion")
+
+    # Also add to principles list for forgetting/reinforcement tracking
+    principles = trail.setdefault("principles", [])
+    if summary not in principles:
+        principles.append(summary)
+
+    # Mark all entries with this pattern_key as promoted
+    entry["status"] = "promoted"
+    for e in trail.get("entries", []):
+        if e.get("pattern_key") == pattern_key and e["id"] != entry["id"]:
+            if e.get("status") not in ("promoted", "resolved", "wont_fix"):
+                e["status"] = "promoted"
+    save_trail(trail)
+
+    print(f"   ✅ Promoted to {target}: {line[:60]}")
+    return target
+
+
+def auto_detect_daily(trail):
+    """Scan today's daily log and auto-detect learning opportunities.
+    Closes the gap: agent doesn't need to remember to call detect_triggers."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    daily_path = os.path.join(MEMORY_DIR, f"{today}.md")
+
+    if not os.path.exists(daily_path):
+        return 0
+
+    with open(daily_path, "r") as f:
+        content = f.read()
+
+    if not content.strip():
+        return 0
+
+    # Detection patterns (subset of reflect.py, self-contained)
+    detect_patterns = [
+        ("correction", [r"不对", r"错了", r"搞错", r"不是这样", r"不是",
+                        r"no,|not right|wrong|incorrect|mistake",
+                        r"should be|should use|should do", r"你搞|骗我|假的|糊弄"]),
+        ("feature", [r"能不能|可以.*吗|加个|加上|增加|做个|实现一下",
+                     r"帮忙|帮我|给我|弄一个|搞一个",
+                     r"can you also|can you add|i wish|i need"]),
+        ("error", [r"失败|报错|出错|错误|不行|用不了|打不开|连不上",
+                   r"超时|挂掉|崩溃|闪退|卡住",
+                   r"failed|error|exception|traceback|timeout"]),
+        ("knowledge_gap", [r"其实|实际上|真相是|本来.*是",
+                           r"过时|废弃|不适用|改版|换了|迁移",
+                           r"配置都没有|没有存|怎么没有"]),
+    ]
+
+    detected = []
+    lines = content.split("\n")
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Focus on emoji-marked lines and longer content
+        if not (stripped.startswith("###") or len(stripped) > 30):
+            continue
+
+        text_lower = stripped.lower()
+        for trigger_type, patterns in detect_patterns:
+            for pat in patterns:
+                if re.search(pat, text_lower):
+                    summary_text = stripped.lstrip("#\u2705\u274c\ud83d\udca1\ud83d\udccc\ud83e\udd16 ").strip()[:120]
+                    # Dedup: skip if already logged
+                    already_logged = any(
+                        summary_text[:40] in e.get("summary", "")[:40]
+                        for e in trail.get("entries", [])
+                    )
+                    if not already_logged:
+                        area = "behavior" if trigger_type in ("correction", "knowledge_gap") else "tooling"
+                        priority = "high" if trigger_type in ("correction", "error") else "medium"
+                        pk = "auto-" + re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", summary_text.lower())[:30].strip("-")
+                        log_entry(trail, trigger_type, summary_text,
+                                  area=area, priority=priority,
+                                  pattern_key=pk, source="auto-detect")
+                        detected.append((trigger_type, summary_text[:60]))
+                    break  # one entry per line
+            if any(p[0] == trigger_type for p in detected[-1:]):
+                break
+
+    return len(detected)
+
+
+def generate_session_summary(trail):
+    """Auto-generate L1 session summary from today's daily log."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    daily_path = os.path.join(MEMORY_DIR, f"{today}.md")
+    sessions_dir = os.path.join(MEMORY_DIR, "sessions")
+    os.makedirs(sessions_dir, exist_ok=True)
+
+    if not os.path.exists(daily_path):
+        return None
+
+    with open(daily_path, "r") as f:
+        content = f.read()
+
+    if not content.strip():
+        return None
+
+    # Extract significant entries
+    tasks = []
+    errors = []
+    insights = []
+    for l in content.split("\n"):
+        stripped = l.strip()
+        if stripped.startswith("### ✅"):
+            tasks.append(stripped)
+        elif stripped.startswith("### ❌"):
+            errors.append(stripped)
+        elif stripped.startswith("### 💡"):
+            insights.append(stripped)
+
+    if not tasks and not errors and not insights:
+        return None
+
+    # Check if content already exists in any today's summary (avoid duplicates)
+    existing = sorted(glob.glob(os.path.join(sessions_dir, f"{today}-*.md")))
+    new_body_lines = []
+    for t in tasks:
+        new_body_lines.append(f"- {t.replace('### ✅ ', '').strip()}")
+    new_body = "\n".join(new_body_lines) if new_body_lines else ""
+
+    for ext in existing:
+        with open(ext) as f:
+            ext_content = f.read()
+        if new_body and new_body in ext_content:
+            # Already summarized, skip
+            return None
+
+    seq = len(existing) + 1
+
+    summary_path = os.path.join(sessions_dir, f"{today}-{seq:03d}.md")
+    with open(summary_path, "w") as f:
+        f.write(f"# Session Summary: {today}-{seq:03d}\n\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
+        if tasks:
+            f.write("## Tasks Completed\n")
+            for t in tasks:
+                f.write(f"- {t.replace('### ✅ ', '').strip()}\n")
+            f.write("\n")
+        if errors:
+            f.write("## Errors\n")
+            for e in errors:
+                f.write(f"- {e.replace('### ❌ ', '').strip()}\n")
+            f.write("\n")
+        if insights:
+            f.write("## Insights\n")
+            for i in insights:
+                f.write(f"- {i.replace('### 💡 ', '').strip()}\n")
+            f.write("\n")
+        # Add stats
+        entries = trail.get("entries", [])
+        recent = [e for e in entries if e.get("last_seen", "") == today]
+        if recent:
+            f.write(f"## Learning Trail\n")
+            f.write(f"- {len(recent)} new entries today\n")
+            f.write(f"- Total entries: {len(entries)}\n\n")
+
+    return summary_path
 
 
 def suggest_promotion(entry):
@@ -567,7 +1391,19 @@ def check_verifications(trail):
 
 # ── Status & reports ─────────────────────────────────────────────
 
+def recalc_stats(trail):
+    """Recalculate stats from actual data to prevent drift."""
+    trail["stats"]["total_entries"] = len(trail.get("entries", []))
+    trail["stats"]["total_changes"] = len(trail.get("changes", []))
+    trail["stats"]["total_scores"] = len(trail.get("scores", []))
+    trail["stats"]["total_nodes"] = len(trail.get("graph", {}).get("nodes", []))
+    trail["stats"]["total_edges"] = len(trail.get("graph", {}).get("edges", []))
+    save_trail(trail)
+    return trail["stats"]
+
+
 def show_status(trail):
+    trail["stats"] = recalc_stats(trail)
     entries = trail.get("entries", [])
     changes = trail.get("changes", [])
     watchlist = trail.get("watchlist", [])
@@ -605,96 +1441,150 @@ def show_status(trail):
             print(f"   • [{r.get('id','?')}] {r.get('summary','')[:60]} → {suggest_promotion(r)}")
 
 
-def run_full_cycle(trail):
+def run_full_cycle(trail, auto_promote=True, auto_summary=True):
     now = datetime.now()
     trail["last_cycle"] = now.isoformat()
-    save_trail(trail)
+    trail["stats"] = recalc_stats(trail)
 
+    actions_taken = []
     print(f"🔄 Learning Cycle — {now.strftime('%Y-%m-%d %H:%M')}\n")
 
-    # Phase 1: Check recent memory
-    print(f"📁 Phase 1: Checking recent session data...")
+    # Phase 1: 记忆 — Check recent memory
+    print(f"📁 Phase 1: Memory scan")
     recent = glob.glob(os.path.join(MEMORY_DIR, "*.md"))
     recent = [f for f in recent if ".dreams" not in f
               and os.path.basename(f) != ".learning-trail.json"]
     print(f"   {len(recent)} memory file(s)")
 
-    # Phase 2: Check verifications
+    # Phase 2: 提炼 — Check verifications
     due, pend = check_verifications(trail)
     print(f"\n✅ Phase 2: Verification check")
     print(f"   {len(due)} due for review, {len(pend)} still monitoring")
     for d in due:
         print(f"   └ [{d.get('id','?')}] {d.get('target','?')}: {d.get('hypothesis','')[:60]}")
+        if d.get("id"):
+            actions_taken.append(f"⚠️  Verify change [{d['id']}]: {d.get('hypothesis','')[:60]}")
 
-    # Phase 3: Check patterns for promotion
+    # Phase 3: 提炼 — Pattern promotion (core)
     ready = find_patterns_ready(trail)
-    print(f"\n🚀 Phase 3: Pattern promotion check")
+    promoted_count = 0
+    print(f"\n🚀 Phase 3: Pattern promotion")
     if ready:
-        for r in ready:
-            target = suggest_promotion(r)
-            print(f"   └ [{r.get('id','?')}] {r.get('summary','')[:60]} → promote to {target}")
+        for pk, count, entry in ready:
+            target = suggest_promotion(entry)
+            print(f"   └ [{entry.get('id','?')}] {pk} ({count}x) → {target}")
+            if auto_promote:
+                result = execute_promotion(trail, pk, count, entry)
+                if result:
+                    promoted_count += 1
+                    actions_taken.append(f"📝 Promoted '{pk}' to {result}")
+        if promoted_count > 0:
+            print(f"   ✅ Auto-promoted {promoted_count} pattern(s)")
     else:
-        print(f"   No patterns ready yet (need ≥3 occurrences across ≥2 sessions)")
+        print(f"   No patterns ready (need ≥2 occurrences across ≥2 sessions)")
 
-    # Phase 4: Forgetting check
+    # Phase 4: 记忆维护 — Forgetting
     demoted = apply_forgetting(trail)
     print(f"\n⏳ Phase 4: Forgetting check")
     if demoted:
         for eid, summary, detail in demoted:
             print(f"   └ {detail}: [{eid}] {summary}")
     else:
-        print(f"   No principles expired (threshold: {FORGET_DAYS}d without reinforcement)")
+        print(f"   No principles expired")
 
-    # Phase 5: Auto-revert check
+    # Phase 5: 提炼 — Auto-revert
     reverted = auto_revert_failed(trail)
     print(f"\n↩️ Phase 5: Auto-revert check")
     if reverted:
         print(f"   Auto-reverted: {len(reverted)} changes")
+        actions_taken.append(f"↩️  Auto-reverted {len(reverted)} failed change(s)")
     else:
         print(f"   No overdue changes to revert")
 
-    # Phase 6: Check for conflicts among principles
-    principles = trail.get("principles", [])
-    all_conflicts = []
-    for i, p in enumerate(principles):
-        conflicts = detect_conflicts(p, principles[:i] + principles[i+1:])
-        for existing, reason in conflicts:
-            all_conflicts.append((p, existing, reason))
-    print(f"\n⚡ Phase 6: Conflict check")
-    if all_conflicts:
-        for new_p, old_p, reason in all_conflicts:
-            score_new = assign_priority_score(trail, {"priority": "medium", "recurrence_count": 0, "area": "", "last_seen": None})
-            print(f"   ⚠️ {reason}")
-            print(f"      '{new_p[:50]}' vs '{old_p[:50]}'")
-    else:
-        print(f"   No conflicts detected among {len(principles)} principles")
-
-    # Phase 7: Memory retention check
+    # Phase 6: 记忆维护 — Retention
     expired = check_memory_retention(trail)
-    print(f"\n🗑️ Phase 7: Memory retention check")
+    print(f"\n🗑️ Phase 6: Memory retention")
     if expired:
-        for eid, summary, detail in expired:
-            print(f"   └ {detail}: [{eid}] {summary}")
+        print(f"   {len(expired)} entries expired (auto-resolved)")
     else:
-        print(f"   No expired entries (threshold: 90d without activity)")
+        print(f"   No expired entries")
 
-    # Phase 8: Summary
+    # Phase 7: 检测 — Auto-detect from daily log
+    print(f"\n🔍 Phase 7: Auto-detect learning")
+    try:
+        detected = auto_detect_daily(trail)
+        if detected:
+            print(f"   ✅ Detected {detected} new learning(s) from daily log")
+            actions_taken.append(f"🔍 Auto-detected {detected} learning(s)")
+        else:
+            print(f"   No new patterns detected")
+    except Exception as e:
+        print(f"   Auto-detect failed: {e}")
+
+    # Phase 8: 🌙 Dream — Memory distillation
+    print(f"\n🌙 Phase 8: Dream — Memory distillation")
+    try:
+        import subprocess
+        dream_script = os.path.join(os.path.dirname(__file__), "dream.py")
+        result = subprocess.run(
+            [sys.executable, dream_script, "--run", "--days", "14"],
+            capture_output=True, text=True, timeout=120
+        )
+        if "updated MEMORY.md" in result.stdout:
+            print(f"   ✅ Distilled new learnings into MEMORY.md")
+            actions_taken.append(f"🌙 Dream: distilled memory from recent logs")
+        elif "already up to date" in result.stdout:
+            print(f"   ✅ MEMORY.md is current, nothing to add")
+        else:
+            for line in result.stdout.split('\n'):
+                if line.strip():
+                    print(f"   {line}")
+    except Exception as e:
+        print(f"   Dream failed: {e}")
+
+    # Phase 9: 记忆 — Index build
+    print(f"\n📚 Phase 9: Memory index")
+    try:
+        index = build_memory_index(trail)
+        topics = list(index.keys())
+        print(f"   {len(topics)} topics indexed: {', '.join(topics)}")
+    except Exception as e:
+        print(f"   Index build failed: {e}")
+
+    # Phase 10: 记忆 — Session summary (L1)
+    print(f"\n📝 Phase 10: Session summary")
+    if auto_summary:
+        summary_path = generate_session_summary(trail)
+        if summary_path:
+            print(f"   ✅ Generated: {os.path.relpath(summary_path, WORKSPACE)}")
+            actions_taken.append(f"📝 Session summary saved")
+        else:
+            print(f"   No new activity to summarize")
+    else:
+        print(f"   Skipped")
+
+    # Final summary
+    trail["stats"] = recalc_stats(trail)
     stats = trail.get("stats", {})
-    entries = trail.get("entries", [])
-    print(f"\n📊 Phase 8: Summary")
-    print(f"   {stats.get('total_entries',0)} total entries")
-    print(f"   {stats.get('total_changes',0)} changes, {stats.get('verified_ok',0)} verified, {stats.get('reverted',0)} reverted")
-    print(f"   {len(principles)} principles, {len(demoted)} demoted, {len(expired)} expired")
+    print(f"\n📊 Final Summary")
+    print(f"   Entries: {stats.get('total_entries',0)} | Changes: {stats.get('total_changes',0)} | Verified: {stats.get('verified_ok',0)}")
+    print(f"   Promoted: {promoted_count} | Graph: {stats.get('total_nodes',0)}n/{stats.get('total_edges',0)}e")
 
-    print(f"\n🤖 Agent follow-up needed:")
-    if due:
-        print(f"   • Review {len(due)} pending verifications")
-    if ready:
-        print(f"   • Promote {len(ready)} recurring patterns")
-    if all_conflicts:
-        print(f"   • Resolve {len(all_conflicts)} conflicting principles")
-    if expired:
-        print(f"   • {len(expired)} entries expired (auto-resolved)")
+    if actions_taken:
+        print(f"\n⚡ Actions taken this cycle:")
+        for a in actions_taken:
+            print(f"   {a}")
+        # Write cycle summary to daily log for agent visibility
+        daily_path = os.path.join(MEMORY_DIR, now.strftime("%Y-%m-%d") + ".md")
+        try:
+            with open(daily_path, "a") as f:
+                f.write(f"\n### 🤖 {now.strftime('%H:%M')} - Self-improvement cycle\n")
+                for a in actions_taken:
+                    f.write(f"- {a}\n")
+        except OSError:
+            pass
+    else:
+        print(f"\n✅ No changes needed — system is stable")
 
 
 # ── CLI ──────────────────────────────────────────────────────────
@@ -712,7 +1602,10 @@ def main():
     parser.add_argument("--priority", default="medium",
                         choices=["critical", "high", "medium", "low"])
     parser.add_argument("--pattern-key", default=None, help="Pattern key for dedup")
-    parser.add_argument("--add-change", nargs=3, metavar=("TARGET", "CHANGE", "HYPOTHESIS"),
+    parser.add_argument("--source", default=None,
+                        choices=["conversation", "error", "user_feedback", "self_discovery"],
+                        help="Log entry source (default: self_discovery)")
+    parser.add_argument("--add-change", "--record-change", nargs=3, metavar=("TARGET", "CHANGE", "HYPOTHESIS"),
                         help="Record a change with verification")
     parser.add_argument("--add-principle", nargs=1, metavar="PRINCIPLE",
                         help="Add a distilled principle")
@@ -724,6 +1617,28 @@ def main():
                         help="Check for expired entries (90d)")
     parser.add_argument("--propose", action="store_true",
                         help="Generate improvement proposals for user review")
+    parser.add_argument("--score", nargs=5, metavar=("ACC", "USE", "EFF", "TON", "PRO"),
+                        help="Score last conversation (0-10 each: accuracy, usefulness, efficiency, tone, proactiveness)")
+    parser.add_argument("--trends", type=int, default=0, metavar="DAYS",
+                        help="Show score trends for last N days")
+    parser.add_argument("--build-index", action="store_true",
+                        help="Build topic-indexed memory index")
+    parser.add_argument("--query-memory", nargs=1, metavar="TOPIC",
+                        help="Query memory by topic")
+    parser.add_argument("--graph-node", nargs=3, metavar=("TYPE", "CONTENT", "SOURCE"),
+                        help="Create graph node: TYPE=event|lesson|principle|knowledge|pattern CONTENT='text' SOURCE='manual|auto'")
+    parser.add_argument("--graph-edge", nargs=3, metavar=("FROM", "TO", "TYPE"),
+                        help="Create graph edge: FROM=node_id TO=node_id TYPE=caused_by|led_to|supports|contradicts|related_to|derived_from")
+    parser.add_argument("--graph-query", nargs="?", const="all",
+                        help="Query graph: --graph-query [node_id|type:TYPE|tag:TAG]")
+    parser.add_argument("--graph-auto-link", nargs=2, metavar=("NODE_ID", "CONTENT"),
+                        help="Auto-link a node to existing nodes based on content similarity")
+    parser.add_argument("--graph-rank", nargs=1, metavar="QUERY",
+                        help="Rank graph nodes by query using Personalized PageRank")
+    parser.add_argument("--graph-dedup", type=float, default=0.0, metavar="THRESHOLD",
+                        help="Find semantically duplicate nodes (threshold 0.0-1.0)")
+    parser.add_argument("--merge-nodes", nargs=2, metavar=("NODE_A", "NODE_B"),
+                        help="Merge two duplicate nodes by ID")
     args = parser.parse_args()
 
     trail = ensure_trail()
@@ -745,19 +1660,21 @@ def main():
     elif args.promote:
         ready = find_patterns_ready(trail)
         if ready:
-            print(f"🚀 {len(ready)} pattern(s) ready for promotion:")
-            for r in ready:
-                target = suggest_promotion(r)
-                print(f"\n  [{r.get('id','?')}] {r.get('summary','')[:80]}")
-                print(f"  → Promote to: {target}")
-                print(f"  ↳ Source: {r.get('source','?')}")
+            print(f"🚀 {len(ready)} pattern(s) ready for promotion, executing...\n")
+            promoted = 0
+            for pk, count, entry in ready:
+                result = execute_promotion(trail, pk, count, entry)
+                if result:
+                    promoted += 1
+            print(f"\n✅ Promoted {promoted}/{len(ready)} patterns")
         else:
-            print("No patterns ready for promotion yet (need ≥3 occurrences across ≥2 sessions)")
+            print("No patterns ready for promotion yet (need ≥2 occurrences across ≥2 sessions)")
     elif args.log:
         etype, summary = args.log
         log_entry(trail, etype, summary,
                   area=args.area, priority=args.priority,
-                  pattern_key=args.pattern_key)
+                  pattern_key=args.pattern_key,
+                  source=args.source)
     elif args.add_change:
         target, change, hypothesis = args.add_change
         record_change(trail, target, change, hypothesis)
@@ -793,6 +1710,81 @@ def main():
     elif args.propose:
         proposals = generate_proposals(trail)
         print_proposals(proposals)
+    elif args.score:
+        acc, use, eff, ton, pro = [int(x) for x in args.score]
+        score_conversation(trail, acc, use, eff, ton, pro)
+    elif args.trends > 0:
+        show_score_trends(trail, args.trends)
+    elif args.build_index:
+        index = build_memory_index(trail)
+        topics = list(index.keys())
+        print(f"📚 Built memory index: {len(topics)} topics ({', '.join(topics)})")
+    elif args.query_memory:
+        topic = args.query_memory[0]
+        results = query_topic_memory(topic)
+        if results:
+            print(f"🔍 Memory for topic '{topic}':")
+            for r in results:
+                print(f"  [{r['date']}] {r['file']}")
+                for line in r.get('summary', []):
+                    print(f"    → {line[:80]}")
+        else:
+            print(f"No memory found for topic '{topic}'")
+            print(f"  Try: --build-index first")
+    elif args.graph_node:
+        node_type, content, source = args.graph_node
+        node_id = create_graph_node(trail, node_type, content, source=source)
+        if node_id:
+            # Auto-link to existing nodes
+            linked = auto_link_graph(trail, node_id, content)
+            if linked:
+                print(f"  🔗 Auto-linked to: {', '.join(linked)}")
+    elif args.graph_edge:
+        from_id, to_id, edge_type = args.graph_edge
+        create_graph_edge(trail, from_id, to_id, edge_type)
+    elif args.graph_query:
+        query = args.graph_query
+        if query == "all":
+            print_graph(trail)
+        elif query.startswith("type:"):
+            node_type = query[5:]
+            print_graph(trail, node_type=node_type)
+        elif query.startswith("tag:"):
+            tag = query[4:]
+            print_graph(trail, tag=tag)
+        else:
+            print_graph(trail, node_id=query)
+    elif args.graph_auto_link:
+        node_id, content = args.graph_auto_link
+        linked = auto_link_graph(trail, node_id, content)
+        if linked:
+            print(f"🔗 Auto-linked to: {', '.join(linked)}")
+        else:
+            print("No auto-links found.")
+    elif args.graph_rank:
+        query = args.graph_rank[0]
+        print_ranked_graph(trail, query)
+    elif args.merge_nodes:
+        nid_a, nid_b = args.merge_nodes
+        dups = semantic_dedup(trail, 0.0)
+        match = next((d for d in dups if {"node_a": nid_a, "node_b": nid_b} == {"node_a": d["node_a"], "node_b": d["node_b"]} or {"node_a": nid_a, "node_b": nid_b} == {"node_a": d["node_b"], "node_b": d["node_a"]}), None)
+        if match:
+            merge_duplicate_nodes(trail, match)
+        else:
+            print(f"No duplicate pair found for [{nid_a}] ↔ [{nid_b}]")
+            print("  Run --graph-dedup first to find duplicates")
+    elif args.graph_dedup > 0:
+        threshold = args.graph_dedup
+        dups = semantic_dedup(trail, threshold)
+        if dups:
+            print(f"🔍 Found {len(dups)} potential duplicates (threshold: {threshold}):")
+            for d in dups:
+                print(f"  [{d['node_a']}] ↔ [{d['node_b']}] (sim: {d['similarity']})")
+                print(f"    A: {d['content_a']}")
+                print(f"    B: {d['content_b']}")
+            print(f"\n  To merge: --merge-nodes {dups[0]['node_a']} {dups[0]['node_b']}")
+        else:
+            print(f"No duplicates found above threshold {threshold}")
     else:
         show_status(trail)
 

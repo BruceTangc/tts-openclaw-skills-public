@@ -26,63 +26,75 @@ LEARNING_TRAIL_PATH = os.path.join(MEMORY_DIR, ".learning-trail.json")
 # ── Detection triggers ──────────────────────────────────────────
 
 CORRECTION_PATTERNS = [
+    # English
     r"(?:no|not|wrong|incorrect|actually|mistake|error|that['']s not)",
     r"(?:should (?:be|use|have|do))",
     r"(?:don['']t|doesn['']t|isn['']t|aren['']t|wasn['']t)",
     r"(?:you['']re wrong|you made a mistake|that['']s wrong)",
     r"(?:let me correct|could you fix|fix this|wrong answer)",
+    # Chinese
+    r"(?:不对|错了|不是这样|搞错了|你弄错了|骗我|假的|糊弄|瞎说|胡说)",
+    r"(?:应该是|正确的是|不是这样|哪有|谁说)",
+    r"(?:纠正|改正|改过来|重来|重新)",
 ]
 
 FEATURE_PATTERNS = [
+    # English
     r"(?:can you (?:also|add|make|do|create))",
     r"(?:i wish|i need|i want|i would like|it would be great)",
     r"(?:is there a way|could you also|why can['']t)",
     r"(?:feature request|new feature|missing feature)",
+    # Chinese
+    r"(?:能不能|可以.*吗|加个|加上|增加|新增|做个|做一个)",
+    r"(?:帮忙|帮我|给我|弄一个|搞一个|实现一下)",
+    r"(?:(?:怎么|如何).*(?:弄|做|改|加|实现))",
+    r"(?:没有.*功能|缺少.*功能|需要.*功能)",
 ]
 
 ERROR_PATTERNS = [
+    # English
     r"(?:failed|error|exception|traceback|timeout|crash)",
     r"(?:exit code|non-zero|unexpected output)",
     r"(?:connection refused|not found|permission denied)",
     r"(?:syntax error|typeerror|attributeerror|keyerror|importerror)",
+    # Chinese
+    r"(?:失败了|报错|出错|错误了|不行|用不了|打不开|连不上)",
+    r"(?:超时|挂掉|崩溃|闪退|卡住)",
+    r"(?:没有权限|找不到|不存在|无法访问)",
 ]
 
 KNOWLEDGE_GAP_PATTERNS = [
+    # English
     r"(?:actually, it works like this|the correct way is)",
     r"(?:i didn['']t know|you need to understand)",
     r"(?:let me explain|what you don['']t know)",
     r"(?:that['']s outdated|no longer works|deprecated)",
+    # Chinese
+    r"(?:其实|实际上是|正确的是|真相是|本来)",
+    r"(?:你不知道|你不懂|你还不了解|你理解错了)",
+    r"(?:过时了|已经废弃|不适用了|改版了)",
+    r"(?:换了|迁移了|改了|更新了)",
+    r"(?:配置都没有了|没有存吗|怎么没有了)",
 ]
 
 
 def detect_triggers(text):
-    """Analyze text for learning triggers."""
+    """Analyze text for learning triggers. Returns all detected triggers (not just first)."""
     results = []
     text_lower = text.lower()
 
-    # Corrections
-    for pat in CORRECTION_PATTERNS:
-        if re.search(pat, text_lower):
-            results.append(("correction", text[:80]))
-            break
+    trigger_groups = [
+        (CORRECTION_PATTERNS, "correction"),
+        (FEATURE_PATTERNS, "feature"),
+        (ERROR_PATTERNS, "error"),
+        (KNOWLEDGE_GAP_PATTERNS, "knowledge_gap"),
+    ]
 
-    # Feature requests
-    for pat in FEATURE_PATTERNS:
-        if re.search(pat, text_lower):
-            results.append(("feature", text[:80]))
-            break
-
-    # Errors
-    for pat in ERROR_PATTERNS:
-        if re.search(pat, text_lower):
-            results.append(("error", text[:80]))
-            break
-
-    # Knowledge gaps
-    for pat in KNOWLEDGE_GAP_PATTERNS:
-        if re.search(pat, text_lower):
-            results.append(("knowledge_gap", text[:80]))
-            break
+    for patterns, trigger_type in trigger_groups:
+        for pat in patterns:
+            if re.search(pat, text_lower):
+                results.append((trigger_type, text[:80]))
+                break
 
     return results
 
