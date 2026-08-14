@@ -1829,7 +1829,7 @@ Global Cycle 只读"有变化的 Agent"的 Bus 事件。
 
 ```bash
 # 各 Agent 上报（必须 --central，写中央总线）
-python3 skills/self-improvement-llm/scripts/bus.py --central   --topic "主题" --content "经验" --scope AGENT --agent 厂长 --confidence 85
+python3 skills/self-improvement-llm/scripts/bus.py --central   --topic "主题" --content "经验" --scope AGENT --agent <agent名> --confidence 85
 ```
 
 ### 49.1.4 Learning Bus Drain
@@ -2030,7 +2030,7 @@ python3 scripts/bus.py --pending                              # 待处理事件
 python3 scripts/bus.py --publish '{"event":"...","scope":"AGENT",...}'
 python3 scripts/bus.py --central --event learning_candidate \
   --topic "主题" --content "经验" --scope AGENT \
-  --agent 厂长 --confidence 85 --project "项目名"
+  --agent <agent名> --confidence 85 --project "项目名"
 ```
 
 - `--central`：强制写入中央 Learning Bus（主工作区 `memory/agents/bus.json`）

@@ -1464,7 +1464,7 @@ def show_status(trail):
 def aggregate_bus_events(trail, lock=True):
     """聚合中央 Learning Bus（memory/agents/bus.json）的待处理事件。
 
-    多 Agent 学习 OS：厂长/财神等 Agent 通过 bus.py --central 上报经验，
+    多 Agent 学习 OS：各 Agent（如 agent-a/agent-b）通过 bus.py --central 上报经验，
     全局学习引擎在这里统一收取、去重、写入 learning trail。
 
     V3.2.1 增强：

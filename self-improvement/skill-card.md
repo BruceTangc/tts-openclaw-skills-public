@@ -39,7 +39,7 @@ Mitigation: Import only trusted backups, prefer non-overwrite imports, and inspe
 **Other Properties Related to Output:** [May create or update local memory logs, indexes, generated skill drafts, and guidance files when its scripts are run.] <br>
 
 ## Skill Version(s): <br>
-2.2.3 (source: server release evidence) <br>
+3.2.2 (source: public repository) <br>
 
 ## Ethical Considerations: <br>
 Users should evaluate whether this skill is appropriate for their environment, review any generated or modified files before relying on them, and apply their organization's safety, security, and compliance requirements before deployment. <br>
