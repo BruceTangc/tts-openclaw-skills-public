@@ -2188,11 +2188,11 @@ OpenClaw
 │   ├── data-agent
 │   └── risk-agent
 │
-├── Project: 报价
+├── Project: Quoting
 │   ├── quotation-agent
 │   └── factory-agent
 │
-└── Project: 仓库管理
+└── Project: Inventory
     └── warehouse-agent
 ```
 
@@ -2404,12 +2404,12 @@ demote rather than delete
                          └───────────┬──────────┘
                                      │
                      ┌───────────────▼───────────────┐
-                     │  Global Scheduler (主 Agent)  │
+                     │  Global Scheduler (Main Agent) │
                      │  Global Learning Cycle / Cron │
                      └───────────────┬───────────────┘
                                      │
                          ┌───────────▼───────────┐
-                         │   Learning OS 中央    │
+                         │   Learning OS Central   │
                          │ Central Learning     │
                          │ Phase 0: Bus Drain   │
                          └───────────┬───────────┘
@@ -2424,7 +2424,7 @@ demote rather than delete
                                      │
                        ┌─────────────┴─────────────┐
                        ↓                           ↓
-                  Learning Bus（中央）           Decisions
+                  Learning Bus (Central)          Decisions
                        │
           ┌────────────┼────────────┐
           ↓            ↓            ↓
