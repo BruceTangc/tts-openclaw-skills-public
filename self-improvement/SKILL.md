@@ -2458,7 +2458,140 @@ demote rather than delete
 
 ---
 
-# 60. Version
+# 60. Final Principle
+
+The goal is not:
+
+> Make every Agent know everything.
+
+The goal is:
+
+> Make every Agent know what it needs, while allowing verified knowledge to flow through one controlled learning system — and allowing knowledge to shrink in scope when evidence later shows it was over-generalized.
+
+Therefore:
+
+```text
+Many Agents
+    +
+One Learning OS
+    +
+Scoped Memory (default narrow)
+    +
+Controlled Learning Bus
+    +
+Evidence Decay
+    +
+Verification
+    +
+Promotion + Demotion
+    +
+Governance
+    =
+A scalable and self-correcting OpenClaw multi-Agent system
+```
+
+---
+
+# 61. Runbook (Operations Manual)
+
+> For the practical operator: what cron to set, what to run daily, how to read output, how to approve candidates.
+> All commands run from `skills/self-improvement-llm/scripts/`, and every script supports `--help`.
+
+## 61.1 Daily Cycle (run every day)
+
+```bash
+# 完整学习循环（10 Phase，见 §49.2）——主入口
+python3 scripts/learn.py --cycle
+```
+
+- Single-Agent: just run `--cycle`.
+- Multi-Agent: each Agent first reports events via `bus.py --central`,
+  then the Global Learning Cycle (§49.1) aggregates them in Phase 0.
+
+## 61.2 Quick Checks (lightweight)
+
+```bash
+python3 scripts/learn.py --status        # learning stats: entries/changes/promotions
+python3 scripts/learn.py --verify        # any verifications due
+python3 scripts/learn.py --retention     # any 90-day expired entries
+python3 scripts/bus.py --pending         # how many pending bus events remain
+python3 scripts/agents.py --status       # Agent status
+```
+
+Suggested cron: `--cycle` at low frequency (e.g., once daily),
+with `--status` / `--verify` / `--retention` as frequent lightweight checks.
+Do not create a separate learning cycle per node (§49).
+
+## 61.3 How to Read Output (Final Summary of --cycle)
+
+```text
+Entries:  N          # learning trail 条目总数（越大知识库越厚）
+Changes:  N          # 本轮实际应用的变更（关注异常高峰）
+Verified: N          # 本轮完成的验证
+Promoted: N          # 晋升条目数（>0 表示有学习升级，值得看一眼）
+Graph:    N nodes / N edges   # 知识图谱规模
+Actions taken this cycle:     # 本轮动作明细（自动检测到几条新学习等）
+```
+
+## 61.4 skillgen Skill Generation (approval flow)
+
+```bash
+python3 scripts/skillgen.py --scan                    # 1. 扫描 trail 找技能候选
+python3 scripts/skillgen.py --list                    # 2. 查看草拟的技能
+python3 scripts/skillgen.py --generate <pattern_id>   # 3. 生成某个技能草稿
+python3 scripts/skillgen.py --approve <name>          # 4. 审批并安装（人工把关）
+python3 scripts/skillgen.py --auto                    # 一键全自动（scan + generate，不自动安装）
+```
+
+Discipline: **approving and installing is a human action**; `--auto` only produces drafts — installation still requires `--approve` (§30 Governance).
+
+## 61.5 Memory Query / Review
+
+```bash
+python3 scripts/learn.py --search-memory "<query>"   # 跨 memory 搜索
+python3 scripts/learn.py --query-memory <topic>        # 按主题查询
+python3 scripts/learn.py --trends 7                    # 最近评分趋势
+python3 scripts/learn.py --graph-query [node|type:TYPE] # 知识图谱查询
+```
+
+## 61.6 Recording a Mistake / Success
+
+```bash
+# 简单记录（自动分类）
+python3 scripts/learn.py --log error "行情 API 超时未重试"
+python3 scripts/learn.py --log correction "应该在写文件前先 read"
+
+# 带验证的变更记录（Skill 改动）
+python3 scripts/learn.py --add-change skillgen "增加 --approve" "降低误装风险"
+
+# 沉淀一条原则
+python3 scripts/learn.py --add-principle "编辑文件前必须先读取当前内容"
+```
+
+## 61.7 Rollback / Demotion (learning correction)
+
+```bash
+python3 scripts/learn.py --rollback <change_id>          # 回滚一个已应用的变更
+python3 scripts/learn.py --demote <entry_id> --to AGENT  # 范围过大时降级到更窄 scope
+```
+
+## 61.8 Backup / Migration / Restore
+
+```bash
+python3 scripts/sync.py export /tmp/learning-backup.zip   # 迁移/大改动前备份
+python3 scripts/sync.py import /tmp/learning-backup.zip   # 恢复
+python3 scripts/sync.py status                            # 确认数据状态
+```
+
+## 61.9 Conversation Self-Score (optional, builds a feedback loop)
+
+```bash
+python3 scripts/learn.py --score 8 7 9 8 8   # accuracy usefulness efficiency tone proactiveness
+python3 scripts/learn.py --trends 14          # 看两周趋势
+```
+
+---
+# 62. Version
 
 ## V3.2.2
 
@@ -2467,7 +2600,7 @@ Documentation-implementation alignment (doc-code parity).
 - Rewrote §50 CLI Reference to match real script capabilities (verified by running each `--help`)
 - Documented previously-undocumented features: Knowledge Graph CLI (§50.1), conversation scoring `--score`/`--trends`, `--log-daily`/`--add-change`/`--add-principle`, `skillgen.py`, `dream.py`, `reflect.py --collect`, `bus.py --central`
 - Added §49.2 full learning-cycle pipeline (10 Phases, verified via `learn.py --cycle`)
-- Added §62 Runbook (operation manual)
+- Added §61 Runbook (operation manual)
 - Updated §51 Multi-Agent Status to actual `bus.py`/`agents.py` flags
 
 ## V3.2.1
@@ -2509,136 +2642,3 @@ Preserved from V3.1:
 
 ---
 
-# 61. Final Principle
-
-The goal is not:
-
-> Make every Agent know everything.
-
-The goal is:
-
-> Make every Agent know what it needs, while allowing verified knowledge to flow through one controlled learning system — and allowing knowledge to shrink in scope when evidence later shows it was over-generalized.
-
-Therefore:
-
-```text
-Many Agents
-    +
-One Learning OS
-    +
-Scoped Memory (default narrow)
-    +
-Controlled Learning Bus
-    +
-Evidence Decay
-    +
-Verification
-    +
-Promotion + Demotion
-    +
-Governance
-    =
-A scalable and self-correcting OpenClaw multi-Agent system
-```
-
----
-
-# 62. Runbook (Operations Manual)
-
-> For the practical operator: what cron to set, what to run daily, how to read output, how to approve candidates.
-> All commands run from `skills/self-improvement-llm/scripts/`, and every script supports `--help`.
-
-## 62.1 Daily Cycle (run every day)
-
-```bash
-# 完整学习循环（10 Phase，见 §49.2）——主入口
-python3 scripts/learn.py --cycle
-```
-
-- Single-Agent: just run `--cycle`.
-- Multi-Agent: each Agent first reports events via `bus.py --central`,
-  then the Global Learning Cycle (§49.1) aggregates them in Phase 0.
-
-## 62.2 Quick Checks (lightweight)
-
-```bash
-python3 scripts/learn.py --status        # learning stats: entries/changes/promotions
-python3 scripts/learn.py --verify        # any verifications due
-python3 scripts/learn.py --retention     # any 90-day expired entries
-python3 scripts/bus.py --pending         # how many pending bus events remain
-python3 scripts/agents.py --status       # Agent status
-```
-
-Suggested cron: `--cycle` at low frequency (e.g., once daily),
-with `--status` / `--verify` / `--retention` as frequent lightweight checks.
-Do not create a separate learning cycle per node (§49).
-
-## 62.3 How to Read Output (Final Summary of --cycle)
-
-```text
-Entries:  N          # learning trail 条目总数（越大知识库越厚）
-Changes:  N          # 本轮实际应用的变更（关注异常高峰）
-Verified: N          # 本轮完成的验证
-Promoted: N          # 晋升条目数（>0 表示有学习升级，值得看一眼）
-Graph:    N nodes / N edges   # 知识图谱规模
-Actions taken this cycle:     # 本轮动作明细（自动检测到几条新学习等）
-```
-
-## 62.4 skillgen Skill Generation (approval flow)
-
-```bash
-python3 scripts/skillgen.py --scan                    # 1. 扫描 trail 找技能候选
-python3 scripts/skillgen.py --list                    # 2. 查看草拟的技能
-python3 scripts/skillgen.py --generate <pattern_id>   # 3. 生成某个技能草稿
-python3 scripts/skillgen.py --approve <name>          # 4. 审批并安装（人工把关）
-python3 scripts/skillgen.py --auto                    # 一键全自动（scan + generate，不自动安装）
-```
-
-Discipline: **approving and installing is a human action**; `--auto` only produces drafts — installation still requires `--approve` (§30 Governance).
-
-## 62.5 Memory Query / Review
-
-```bash
-python3 scripts/learn.py --search-memory "<query>"   # 跨 memory 搜索
-python3 scripts/learn.py --query-memory <topic>        # 按主题查询
-python3 scripts/learn.py --trends 7                    # 最近评分趋势
-python3 scripts/learn.py --graph-query [node|type:TYPE] # 知识图谱查询
-```
-
-## 62.6 Recording a Mistake / Success
-
-```bash
-# 简单记录（自动分类）
-python3 scripts/learn.py --log error "行情 API 超时未重试"
-python3 scripts/learn.py --log correction "应该在写文件前先 read"
-
-# 带验证的变更记录（Skill 改动）
-python3 scripts/learn.py --add-change skillgen "增加 --approve" "降低误装风险"
-
-# 沉淀一条原则
-python3 scripts/learn.py --add-principle "编辑文件前必须先读取当前内容"
-```
-
-## 62.7 Rollback / Demotion (learning correction)
-
-```bash
-python3 scripts/learn.py --rollback <change_id>          # 回滚一个已应用的变更
-python3 scripts/learn.py --demote <entry_id> --to AGENT  # 范围过大时降级到更窄 scope
-```
-
-## 62.8 Backup / Migration / Restore
-
-```bash
-python3 scripts/sync.py export /tmp/learning-backup.zip   # 迁移/大改动前备份
-python3 scripts/sync.py import /tmp/learning-backup.zip   # 恢复
-python3 scripts/sync.py status                            # 确认数据状态
-```
-
-## 62.9 Conversation Self-Score (optional, builds a feedback loop)
-
-```bash
-python3 scripts/learn.py --score 8 7 9 8 8   # accuracy usefulness efficiency tone proactiveness
-python3 scripts/learn.py --trends 14          # 看两周趋势
-```
-
----
