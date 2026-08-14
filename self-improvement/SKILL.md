@@ -208,7 +208,7 @@ Only valid for one specialist Agent.
 Example:
 
 ```text
-short-term-trader:
+agent-a:
 某种短线信号在特定市场环境下容易误判
 ```
 
@@ -219,7 +219,7 @@ Shared by Agents participating in one project.
 Example:
 
 ```text
-A股模拟交易项目:
+Project-A:
 所有交易 Agent 必须使用新鲜行情数据
 ```
 
@@ -344,17 +344,17 @@ Recommended format:
 ```markdown
 # Agent Registry
 
-## Agent: short-term-trader
+## Agent: agent-a
 
-ID: short-term-trader
-Role: A股短线交易
-Project: A股模拟交易
+ID: agent-a
+Role: Short-term Trading
+Project: Project-A
 Status: active
 
 Skills:
-- market-data
-- technical-analysis
-- paper-trading
+- data-fetch
+- analysis
+- backtest
 
 Memory Scope:
 - AGENT
@@ -447,12 +447,12 @@ An Agent emits:
 ```json
 {
   "event": "learning_candidate",
-  "source_agent": "short-term-trader",
+  "source_agent": "agent-a",
   "scope": "AGENT",
-  "topic": "market-data-freshness",
+  "topic": "data-freshness",
   "content": "必须验证行情时间戳",
   "confidence": 82,
-  "project": "A股模拟交易",
+  "project": "Project-A",
   "evidence": [
     "error-20260813-001",
     "session-20260813-002"
@@ -536,15 +536,15 @@ explicit dependency
 Example:
 
 ```text
-short-term-trader:
+agent-a:
 API X requires timestamp validation
 ```
 
 Relevant:
 
 ```text
-long-term-trader
-market-data-agent
+agent-b
+data-agent
 risk-agent
 ```
 
@@ -1106,13 +1106,13 @@ version
 Example:
 
 ```yaml
-name: market-data-validation
-owner_agent: market-data-agent
-project: A股模拟交易
+name: data-validation
+owner_agent: data-agent
+project: Project-A
 scope: PROJECT
 shared_with:
-  - short-term-trader
-  - long-term-trader
+  - agent-a
+  - agent-b
   - risk-agent
 version: 1.2.0
 ```
@@ -2178,10 +2178,10 @@ OpenClaw
 ├── User
 │   └── preferences
 │
-├── Project: A股模拟交易
-│   ├── long-term-trader
-│   ├── short-term-trader
-│   ├── market-data-agent
+├── Project: Project-A
+│   ├── agent-b
+│   ├── agent-a
+│   ├── data-agent
 │   └── risk-agent
 │
 ├── Project: 报价
@@ -2195,7 +2195,7 @@ OpenClaw
 Suppose:
 
 ```text
-short-term-trader
+agent-a
 发现:
 行情必须验证时间戳
 ```
