@@ -54,7 +54,7 @@ Never treat a single observation as permanent truth.
 
 # 2. Architecture
 
-> 本节点览整体架构。**终版完整架构图见 §59 Final Architecture**（含 Phase 0 Bus Drain、Promotion 全流程细节）。
+> Overview of the overall architecture. **The final full architecture diagram is in §59 Final Architecture** (including Phase 0 Bus Drain and the full Promotion flow).
 
 ```text
                          OpenClaw
@@ -138,7 +138,7 @@ Handles:
 
 ## 3.4 Agent Registry
 
-> 概述，完整规范见 **§7 Agent Registry**（含注册表模板、示例）。
+> Overview; the full specification is in **§7 Agent Registry** (with registry template and examples).
 
 Tracks:
 
@@ -1766,26 +1766,26 @@ Never create duplicate learning cycles.
 
 ---
 
-## 49.1 Global Learning Cycle (V3.2.1 多 Agent 全局调度)
+## 49.1 Global Learning Cycle (V3.2.1 Multi-Agent Global Scheduling)
 
-> 多 Agent 场景下，Learning OS 不是"主 Agent 自己学"，而是作为**全局调度器**
-> 面向整个 OpenClaw 工作区运行。设计目标：**一个 Learning OS，多个 Agent**，
-> 不给每个 Agent 装一套 self-improvement。
+> In a multi-Agent setup, the Learning OS is not "the main Agent learning by itself" — it acts as a **global scheduler**
+> for the entire OpenClaw workspace. Design goal: **one Learning OS, many Agents** —
+> do not install a separate self-improvement per Agent.
 >
-> **Global Learning Cycle 是调度器，不是特权晋升通道。** 所有从 Bus 进入的事件
-> 仍按 Core Loop 处理：scope 默认最窄（AGENT），晋升必须走
-> Confidence + Context-independence + Governance 三重校验，不得因"全局调度"绕过。
+> **The Global Learning Cycle is a scheduler, not a privileged promotion channel.** All events entering from the Bus
+> are still processed through the Core Loop: scope defaults to the narrowest (AGENT), and promotion must pass
+> the three-gate check of Confidence + Context-independence + Governance; "global scheduling" does not bypass it.
 
-### 全局结构
+### Global Structure
 
 ```text
 OpenClaw
  │
- 主 Agent / Global Scheduler
+ Main Agent / Global Scheduler
  │
- Global Learning Cycle（唯一 Cron）
+ Global Learning Cycle (single Cron)
  │
- Agent Registry（agents.py 自动扫描 workspace-*）
+ Agent Registry (agents.py auto-scans workspace-*)
  │
  ┌──────────────┼──────────────┐
  ↓              ↓              ↓
@@ -1793,43 +1793,43 @@ OpenClaw
  │              │              │
  └──────────────┼──────────────┘
                 ↓
-          Learning Bus（bus.py --central 中央总线）
+          Learning Bus (bus.py --central central bus)
                 ↓
-          Central Learning（learn.py --cycle Phase 0 聚合）
+          Central Learning (learn.py --cycle Phase 0 aggregation)
                 ↓
           Scope / Conflict / Evidence
                 ↓
           Agent / Project / User / Global
 ```
 
-### 49.1.1 调度职责
+### 49.1.1 Scheduling Responsibility
 
-Global Learning Cycle 只做一件事：**告诉 Learning OS "现在轮到你检查所有 Agent"**。
-不亲自学，不读全部聊天记录，只消费结构化事件。
+The Global Learning Cycle does exactly one thing: **tells the Learning OS "it is your turn to check all Agents."**
+It does not learn by itself and does not read all chat logs — it only consumes structured events.
 
 ```text
-1. 读取 Agent Registry（有哪些 ACTIVE Agent）
-2. 读取中央 Learning Bus（bus.json 的 pending 事件）
-3. 聚合 → 去重 → scope 判断 → 写入 learning trail
-4. 验证 / 晋升 / 降级 / 清理
-5. 更新 Registry / Index
+1. Read Agent Registry (which Agents are ACTIVE)
+2. Read central Learning Bus (pending events in bus.json)
+3. Aggregate → dedupe → scope resolve → write to learning trail
+4. Verify / promote / demote / clean up
+5. Update Registry / Index
 ```
 
 ### 49.1.2 Agent Discovery
 
-用 `agents.py`（自动扫描 `workspace-*` 目录）维护 `memory/agents/registry.json`。
-Cron 不猜 Agent 列表，直接读 Registry。
+Use `agents.py` (auto-scans `workspace-*` directories) to maintain `memory/agents/registry.json`.
+The cron does not guess the Agent list; it reads the Registry directly.
 
 ```bash
 python3 scripts/agents.py --list
 python3 scripts/agents.py --status
 ```
 
-### 49.1.3 Incremental Agent Scan（增量扫描）
+### 49.1.3 Incremental Agent Scan
 
-不把 20 个 Agent 的聊天记录全拉回来。每个 Agent 平时自己产生结构化
-learning event（任务收尾/踩坑/验证后通过 `bus.py --central` 上报），
-Global Cycle 只读"有变化的 Agent"的 Bus 事件。
+Do not pull back the chat logs of all 20 Agents. Each Agent produces structured
+learning events on its own (reported via `bus.py --central` after task wrap-up / mistakes / verification),
+and the Global Cycle only reads Bus events of "changed Agents."
 
 ```bash
 # 各 Agent 上报（必须 --central，写中央总线）
@@ -1838,115 +1838,115 @@ python3 skills/self-improvement-llm/scripts/bus.py --central   --topic "主题" 
 
 ### 49.1.4 Learning Bus Drain
 
-`learn.py --cycle` 的 **Phase 0** 每轮 Drain 中央 Bus：
+**Phase 0** of `learn.py --cycle` drains the central Bus every cycle:
 
 ```text
-读取 memory/agents/bus.json 的 pending 事件
-→ 去重（topic+content 比对 learning trail）
-→ 写入 trail（source=external 初始不信任）
-→ 事件标记 resolved
-→ 更新 bus.stats
+Read pending events from memory/agents/bus.json
+→ dedupe (compare topic+content against the learning trail)
+→ write to trail (source=external starts untrusted)
+→ mark events resolved
+→ update bus.stats
 ```
 
 ### 49.1.5 Cross-Agent Verification
 
-scope=PROJECT / GLOBAL 的事件需要多源确认，聚合时自动标记
-`extra_meta.xverify = "pending"`，等待后续跨 Agent 验证后晋升。
-单 Agent 的 AGENT 范围事件不强制跨源验证。
+Events with scope=PROJECT / GLOBAL need multi-source confirmation; during aggregation they are automatically marked
+`extra_meta.xverify = "pending"` and wait for cross-Agent verification before promotion.
+AGENT-scoped events from a single Agent are not forced into cross-source verification.
 
 ### 49.1.6 Cron Lock / Concurrency
 
-多个 `--cycle` 同时跑（cron + 手动）可能重复处理。`aggregate_bus_events`
-用文件锁（`memory/agents/.bus.lock` + fcntl）防止并发：
+Multiple `--cycle` runs at the same time (cron + manual) may process duplicates. `aggregate_bus_events`
+uses a file lock (`memory/agents/.bus.lock` + fcntl) to prevent concurrency:
 
 ```text
-拿不到锁 → 本轮跳过（skipped），避免重复写 trail
-拿到锁 → 处理完释放
+Cannot acquire lock → skip this cycle (skipped), avoid duplicate trail writes
+Lock acquired → process then release
 ```
 
 ### 49.1.7 Scan Cursor / Last Scan
 
-`bus.stats.last_scan` 记录上次扫描时间、`last_pending_count` 记录待处理数，
-供外部观察增量进度。无新 pending 事件时 Phase 0 快速返回，不空转。
+`bus.stats.last_scan` records the last scan time and `last_pending_count` records the pending count,
+so external observers can track incremental progress. When there are no new pending events, Phase 0 returns quickly without spinning.
 
-### 49.1.8 Governance Guardrails（治理护栏）
+### 49.1.8 Governance Guardrails
 
-#### 信任模型（external 事件）
+#### Trust Model (external events)
 
-- 聚合进来的 external 事件初始 `trusted=False`，`effective_confidence` 上限 ≤ 60
-- 必须经过至少一次独立验证（同项目其他 Agent 复现 / 后续 session 确认）才能提升
-- 单源 external 事件**永远不能自动晋升到 GLOBAL**（代码层 execute_promotion 已强制拦截）
-- 多源交叉验证过的 external 事件才可进入晋升候选
+- External events aggregated in start with `trusted=False`, and `effective_confidence` is capped at ≤ 60
+- They must pass at least one independent verification (reproduced by another Agent in the same project / confirmed in a later session) before being promoted
+- A single-source external event **can never be auto-promoted to GLOBAL** (enforced in code by execute_promotion)
+- Only multi-source cross-verified external events can enter promotion candidates
 
-#### Demotion 反向传播
+#### Demotion Reverse Propagation
 
-学习被降级后，通过 Learning Bus 发布 `demotion_notification` 事件反向通知相关 Agent。
-Agent 收到后应降低本地对该规则的有效置信度，或将其标记为需重新评估，避免继续按旧的高 scope 规则执行。
+When a learning is demoted, a `demotion_notification` event is published via the Learning Bus to notify the relevant Agents.
+Agents receiving it should lower their local effective confidence for that rule, or mark it for re-evaluation, instead of continuing to follow the old higher-scope rule.
 
-#### 中间态 → Skill Evolution
+#### Intermediate States → Skill Evolution
 
-有价值的 intermediate-state 模式，满足以下任一条件即进入 Skill Evolution 候选：
-- 重复出现 ≥ 2 次
-- 一次 intermediate 导致后续 Skill 行为实际调整
-与 success / error 同等对待，不设歧视。
+Valuable intermediate-state patterns enter Skill Evolution candidates when either condition is met:
+- Recurring ≥ 2 times
+- One intermediate state actually triggers a subsequent Skill behavior adjustment
+They are treated equally with success / error, with no discrimination.
 
-#### 多项目冲突
+#### Multi-Project Conflicts
 
-同一条学习涉及多个 Project 且证据矛盾时，**默认保持各自 PROJECT 范围**，
-禁止自动统一为 GLOBAL。冲突无法解决时标记 Unresolved 交人工裁决。
+When the same learning involves multiple Projects with contradictory evidence, **keep each at its own PROJECT scope by default**,
+and forbid auto-unifying to GLOBAL. If the conflict cannot be resolved, mark it Unresolved and route to human arbitration.
 
-#### Bus 事件生命周期
-
-```text
-pending → resolved（已聚合进 trail）
-pending → rejected（人工/校验拒绝，保留记录不删除）
-pending → expired（超时未处理，标记后清理）
-重复事件：topic+content 去重，同时合并 evidence 字段
-```
-
-## 49.2 完整学习循环管线（learn.py --cycle 实测）
-
-`learn.py --cycle` 是单 Agent 场景的完整循环入口，**实际运行 10 个 Phase**（V3.2.2 实测）：
+#### Bus Event Lifecycle
 
 ```text
-🔌 Phase 0  Aggregate Learning Bus   聚合中央总线事件（drain → trail）
-📁 Phase 1  Memory scan              扫描 memory 文件
-✅ Phase 2  Verification check       待验证项检查
-🚀 Phase 3  Pattern promotion        pattern 晋升检查
-⏳ Phase 4  Forgetting check         遗忘/过期检查
-↩️ Phase 5  Auto-revert check        自动回滚检查
-🗑️ Phase 6  Memory retention         记忆保留（90 天清理）
-🔍 Phase 7  Auto-detect learning     自动检测新学习
-🌙 Phase 8  Dream distillation       梦境蒸馏（记忆压缩）
-📚 Phase 9  Memory index             重建主题索引
-📝 Phase 10 Session summary          会话总结
+pending → resolved (aggregated into trail)
+pending → rejected (rejected manually/by validation, record kept, not deleted)
+pending → expired (not processed within timeout, marked then cleaned up)
+duplicates: dedupe by topic+content, merge evidence fields
 ```
 
-Final Summary 字段解读：
+## 49.2 Complete Learning-Cycle Pipeline (verified via learn.py --cycle)
+
+`learn.py --cycle` is the full-cycle entry point for single-Agent scenarios, **actually running 10 Phases** (verified in V3.2.2):
 
 ```text
-Entries:  N    # trail 中条目总数
-Changes:  N    # 本轮应用的变更
-Verified: N    # 本轮验证数
-Promoted: N    # 晋升数
-Graph:    N nodes / N edges   # 知识图谱规模
-Actions taken this cycle:     # 本轮实际动作明细
+🔌 Phase 0  Aggregate Learning Bus   aggregate central bus events (drain → trail)
+📁 Phase 1  Memory scan              scan memory files
+✅ Phase 2  Verification check       check items pending verification
+🚀 Phase 3  Pattern promotion        check pattern promotions
+⏳ Phase 4  Forgetting check         check forgetting/expiry
+↩️ Phase 5  Auto-revert check        check automatic reverts
+🗑️ Phase 6  Memory retention         memory retention (90-day cleanup)
+🔍 Phase 7  Auto-detect learning     auto-detect new learnings
+🌙 Phase 8  Dream distillation       dream distillation (memory compression)
+📚 Phase 9  Memory index             rebuild topic index
+📝 Phase 10 Session summary          session summary
 ```
 
-Cron 建议：多 Agent 场景用 `--cycle`（§49.1）作为全局调度入口；
-单 Agent 场景直接跑 `--cycle` 即可。轻量巡检用 `--verify` / `--status` / `--retention`，
-不要为每个节点各建一套学习循环。
+Final Summary field reference:
+
+```text
+Entries:  N    # total entries in the trail
+Changes:  N    # changes applied this cycle
+Verified: N    # verifications completed this cycle
+Promoted: N    # promotions this cycle
+Graph:    N nodes / N edges   # knowledge-graph size
+Actions taken this cycle:     # actual actions this cycle
+```
+
+Cron suggestion: in multi-Agent scenarios use `--cycle` (§49.1) as the global scheduling entry;
+in single-Agent scenarios just run `--cycle`. For lightweight checks use `--verify` / `--status` / `--retention`,
+and do not create a separate learning cycle per node.
 
 ---
 
 # 50. CLI Reference
 
-> 以下命令与当前脚本实现一一对应（V3.2.2 实测核对），在
-> `skills/self-improvement-llm/scripts/` 目录下执行。每个脚本都支持 `--help`。
+> The commands below map 1:1 to the current script implementation (verified in V3.2.2) and are run from
+> the `skills/self-improvement-llm/scripts/` directory. Every script supports `--help`.
 
-## 50.1 learn.py — 学习引擎（核心）
+## 50.1 learn.py — Learning Engine (core)
 
-### 生命周期 / 状态
+### Lifecycle / Status
 
 ```bash
 python3 scripts/learn.py --cycle          # 完整学习循环（10 Phase，见 §49.2）
@@ -1958,7 +1958,7 @@ python3 scripts/learn.py --retention      # 检查过期条目（90 天）
 python3 scripts/learn.py --propose        # 生成改进提案供人工审批
 ```
 
-### 记录日志
+### Logging
 
 ```bash
 python3 scripts/learn.py --log correction "..."
@@ -1969,9 +1969,9 @@ python3 scripts/learn.py --log learning "..." \
 ```
 
 - `--log TYPE SUMMARY`：TYPE = `learning | error | feature | correction`
-- 可选参数：`--area`、`--priority {critical,high,medium,low}`、`--pattern-key`（去重）、`--source {conversation,error,user_feedback,self_discovery,external}`
+- Optional flags: `--area`, `--priority {critical,high,medium,low}`, `--pattern-key` (dedup), `--source {conversation,error,user_feedback,self_discovery,external}`
 
-### 高级记录
+### Advanced Logging
 
 ```bash
 python3 scripts/learn.py --log-daily "..."          # 写入今日 memory 文件
@@ -1979,7 +1979,7 @@ python3 scripts/learn.py --add-change <target> "<change>" "<hypothesis>"   # 记
 python3 scripts/learn.py --add-principle "<principle>"                    # 沉淀原则
 ```
 
-### 记忆检索 / 索引
+### Memory Retrieval / Indexing
 
 ```bash
 python3 scripts/learn.py --search-memory "<query>"   # 跨 memory 文件搜索
@@ -1987,7 +1987,7 @@ python3 scripts/learn.py --build-index                 # 重建主题索引
 python3 scripts/learn.py --query-memory <topic>        # 按主题查询
 ```
 
-### 对话自评分（五维 0-10）
+### Conversation Self-Score (five dimensions, 0-10)
 
 ```bash
 python3 scripts/learn.py --score <acc> <use> <eff> <ton> <pro>
@@ -1995,7 +1995,7 @@ python3 scripts/learn.py --score <acc> <use> <eff> <ton> <pro>
 python3 scripts/learn.py --trends 7    # 最近 N 天评分趋势
 ```
 
-### Knowledge Graph（知识图谱）
+### Knowledge Graph
 
 ```bash
 python3 scripts/learn.py --graph-node <type> "<content>" <manual|auto>
@@ -2009,7 +2009,7 @@ python3 scripts/learn.py --graph-dedup <threshold>                  # 查重 0.0
 python3 scripts/learn.py --merge-nodes <node_a> <node_b>            # 合并重复节点
 ```
 
-### 回滚 / 降级
+### Rollback / Demotion
 
 ```bash
 python3 scripts/learn.py --rollback <change_id>
@@ -2017,7 +2017,7 @@ python3 scripts/learn.py --demote <entry_id> --to <scope>
 # scope = TASK | AGENT | PROJECT | USER | GLOBAL
 ```
 
-## 50.2 reflect.py — 反思 / 检测
+## 50.2 reflect.py — Reflection / Detection
 
 ```bash
 python3 scripts/reflect.py --detect "USER_MESSAGE"          # 分析文本触发点
@@ -2026,7 +2026,7 @@ python3 scripts/reflect.py --collect [recent|failed|all]     # 批量收集会�
 python3 scripts/reflect.py --collect --hours 24              # 回溯 N 小时
 ```
 
-## 50.3 bus.py — Learning Bus（多 Agent）
+## 50.3 bus.py — Learning Bus (multi-Agent)
 
 ```bash
 python3 scripts/bus.py --status                               # 总线状态
@@ -2037,8 +2037,8 @@ python3 scripts/bus.py --central --event learning_candidate \
   --agent <agent名> --confidence 85 --project "项目名"
 ```
 
-- `--central`：强制写入中央 Learning Bus（主工作区 `memory/agents/bus.json`）
-- 各 Agent 通过 `--central` 上报，Global Learning Cycle 在 Phase 0 消费（§49.1.4）
+- `--central`: force-write to the central Learning Bus (main workspace `memory/agents/bus.json`)
+- Each Agent reports via `--central`, and the Global Learning Cycle consumes it in Phase 0 (§49.1.4)
 
 ## 50.4 agents.py — Agent Registry
 
@@ -2049,7 +2049,7 @@ python3 scripts/agents.py --capabilities
 python3 scripts/agents.py --overlap
 ```
 
-## 50.5 skillgen.py — 自动技能生成器
+## 50.5 skillgen.py — Automatic Skill Generator
 
 ```bash
 python3 scripts/skillgen.py --scan                     # 扫描 trail 找技能候选
@@ -2061,7 +2061,7 @@ python3 scripts/skillgen.py --status                   # 生成器统计
 python3 scripts/skillgen.py --scan --min-recurrence 3 --days 30
 ```
 
-## 50.6 dream.py — 梦境蒸馏（记忆压缩）
+## 50.6 dream.py — Dream Distillation (memory compression)
 
 ```bash
 python3 scripts/dream.py --run         # 完整蒸馏（扫描近 14 天日志）
@@ -2070,7 +2070,7 @@ python3 scripts/dream.py --days 14     # 指定回溯天数
 python3 scripts/dream.py --report      # 查看近期蒸馏活动
 ```
 
-## 50.7 sync.py — 备份 / 迁移
+## 50.7 sync.py — Backup / Migration
 
 ```bash
 python3 scripts/sync.py export [path]             # 导出为 zip
@@ -2079,7 +2079,7 @@ python3 scripts/sync.py import <zip_path> --overwrite  # 覆盖导入
 python3 scripts/sync.py status                    # 数据状态
 ```
 
-## 50.8 migrate.py — 数据迁移
+## 50.8 migrate.py — Data Migration
 
 ```bash
 python3 scripts/migrate.py --migrate
@@ -2109,7 +2109,7 @@ python3 scripts/bus.py --publish <json>
 python3 scripts/bus.py --central --event <type> --topic <t> --content <c> --scope <s>
 ```
 
-以上脚本为本实现提供并已实测可用。
+These scripts are provided by this implementation and verified working.
 
 ---
 
@@ -2486,10 +2486,10 @@ Added / strengthened:
 - Explicit Decision ↔ Learning boundary and conversion rules
 - Updated core loop, promotion matrix, event types, operating rules, and architecture diagram
 - Global Learning Cycle as pure scheduler (no privileged promotion)
-- External-event trust model & promotion guardrails (source=external 低信任, 单源不自动 GLOBAL)
+- External-event trust model & promotion guardrails (source=external low trust; single source never auto-GLOBAL)
 - Demotion reverse propagation via Learning Bus (demotion_notification)
-- Intermediate-state → Skill Evolution formal trigger (≥2 次 或 触发 Skill 调整)
-- Multi-project conflict isolation (默认各自 PROJECT, 禁止自动统一 GLOBAL)
+- Intermediate-state → Skill Evolution formal trigger (≥2 occurrences or triggers a Skill adjustment)
+- Multi-project conflict isolation (each keeps its own PROJECT by default; auto-unify to GLOBAL is forbidden)
 - Bus event lifecycle (pending → resolved / rejected / expired + evidence merge)
 
 Preserved from V3.1:
@@ -2543,37 +2543,37 @@ A scalable and self-correcting OpenClaw multi-Agent system
 
 ---
 
-# 62. Runbook（操作手册）
+# 62. Runbook (Operations Manual)
 
-> 面向实际操作者：cron 配什么、每天跑什么、输出怎么读、候选怎么审批。
-> 所有命令在 `skills/self-improvement-llm/scripts/` 下执行，每个脚本支持 `--help`。
+> For the practical operator: what cron to set, what to run daily, how to read output, how to approve candidates.
+> All commands run from `skills/self-improvement-llm/scripts/`, and every script supports `--help`.
 
-## 62.1 日常循环（每日必跑）
+## 62.1 Daily Cycle (run every day)
 
 ```bash
 # 完整学习循环（10 Phase，见 §49.2）——主入口
 python3 scripts/learn.py --cycle
 ```
 
-- 单 Agent 场景：`--cycle` 一把梭即可。
-- 多 Agent 场景：先由各 Agent 通过 `bus.py --central` 上报事件，
-  再由 Global Learning Cycle（§49.1）在 Phase 0 统一聚合。
+- Single-Agent: just run `--cycle`.
+- Multi-Agent: each Agent first reports events via `bus.py --central`,
+  then the Global Learning Cycle (§49.1) aggregates them in Phase 0.
 
-## 62.2 快速巡检（轻量）
+## 62.2 Quick Checks (lightweight)
 
 ```bash
-python3 scripts/learn.py --status        # 学习统计：条目/变更/晋升
-python3 scripts/learn.py --verify        # 有没有待验证项到期
-python3 scripts/learn.py --retention     # 有没有 90 天过期条目
-python3 scripts/bus.py --pending         # 总线还有多少待处理事件
-python3 scripts/agents.py --status       # Agent 状态
+python3 scripts/learn.py --status        # learning stats: entries/changes/promotions
+python3 scripts/learn.py --verify        # any verifications due
+python3 scripts/learn.py --retention     # any 90-day expired entries
+python3 scripts/bus.py --pending         # how many pending bus events remain
+python3 scripts/agents.py --status       # Agent status
 ```
 
-建议 cron：`--cycle` 低频（如每日 1 次），
-`--status` / `--verify` / `--retention` 高频轻量巡检。
-不要为每个节点各建一套学习循环（§49）。
+Suggested cron: `--cycle` at low frequency (e.g., once daily),
+with `--status` / `--verify` / `--retention` as frequent lightweight checks.
+Do not create a separate learning cycle per node (§49).
 
-## 62.3 输出怎么读（--cycle 的 Final Summary）
+## 62.3 How to Read Output (Final Summary of --cycle)
 
 ```text
 Entries:  N          # learning trail 条目总数（越大知识库越厚）
@@ -2584,7 +2584,7 @@ Graph:    N nodes / N edges   # 知识图谱规模
 Actions taken this cycle:     # 本轮动作明细（自动检测到几条新学习等）
 ```
 
-## 62.4 skillgen 技能生成（审批流程）
+## 62.4 skillgen Skill Generation (approval flow)
 
 ```bash
 python3 scripts/skillgen.py --scan                    # 1. 扫描 trail 找技能候选
@@ -2594,9 +2594,9 @@ python3 scripts/skillgen.py --approve <name>          # 4. 审批并安装（人
 python3 scripts/skillgen.py --auto                    # 一键全自动（scan + generate，不自动安装）
 ```
 
-纪律：**审批安装是人工动作**，`--auto` 只到生成草稿，安装仍需 `--approve`（§30 Governance）。
+Discipline: **approving and installing is a human action**; `--auto` only produces drafts — installation still requires `--approve` (§30 Governance).
 
-## 62.5 记忆查询 / 回顾
+## 62.5 Memory Query / Review
 
 ```bash
 python3 scripts/learn.py --search-memory "<query>"   # 跨 memory 搜索
@@ -2605,7 +2605,7 @@ python3 scripts/learn.py --trends 7                    # 最近评分趋势
 python3 scripts/learn.py --graph-query [node|type:TYPE] # 知识图谱查询
 ```
 
-## 62.6 记录一次踩坑 / 成功
+## 62.6 Recording a Mistake / Success
 
 ```bash
 # 简单记录（自动分类）
@@ -2619,14 +2619,14 @@ python3 scripts/learn.py --add-change skillgen "增加 --approve" "降低误装�
 python3 scripts/learn.py --add-principle "编辑文件前必须先读取当前内容"
 ```
 
-## 62.7 回滚 / 降级（学习纠偏）
+## 62.7 Rollback / Demotion (learning correction)
 
 ```bash
 python3 scripts/learn.py --rollback <change_id>          # 回滚一个已应用的变更
 python3 scripts/learn.py --demote <entry_id> --to AGENT  # 范围过大时降级到更窄 scope
 ```
 
-## 62.8 备份 / 迁移 / 恢复
+## 62.8 Backup / Migration / Restore
 
 ```bash
 python3 scripts/sync.py export /tmp/learning-backup.zip   # 迁移/大改动前备份
@@ -2634,7 +2634,7 @@ python3 scripts/sync.py import /tmp/learning-backup.zip   # 恢复
 python3 scripts/sync.py status                            # 确认数据状态
 ```
 
-## 62.9 对话自评分（可选，培养反馈闭环）
+## 62.9 Conversation Self-Score (optional, builds a feedback loop)
 
 ```bash
 python3 scripts/learn.py --score 8 7 9 8 8   # accuracy usefulness efficiency tone proactiveness
