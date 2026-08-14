@@ -54,6 +54,8 @@ Never treat a single observation as permanent truth.
 
 # 2. Architecture
 
+> 本节点览整体架构。**终版完整架构图见 §59 Final Architecture**（含 Phase 0 Bus Drain、Promotion 全流程细节）。
+
 ```text
                          OpenClaw
                             │
@@ -135,6 +137,8 @@ Handles:
 - forgetting
 
 ## 3.4 Agent Registry
+
+> 概述，完整规范见 **§7 Agent Registry**（含注册表模板、示例）。
 
 Tracks:
 
