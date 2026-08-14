@@ -22,7 +22,7 @@ import string
 import random
 from datetime import datetime, timedelta
 
-WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE", "/home/admin/.openclaw/workspace")
+WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE_DIR") or os.path.expanduser("~/.openclaw/workspace")
 MEMORY_DIR = os.path.join(WORKSPACE, "memory")
 SKILLS_DIR = os.path.join(WORKSPACE, "skills")
 DRAFTS_DIR = os.path.join(WORKSPACE, "memory", ".skill-drafts")
@@ -72,7 +72,6 @@ SKILL_TEMPLATES = {
     "monitor": {"name": "monitor", "desc": "监控告警"},
     "summarize": {"name": "summarizer", "desc": "内容摘要"},
     "汇率": {"name": "exchange-rate", "desc": "汇率查询"},
-    "结算": {"name": "settlement", "desc": "结算处理"},
     "结算": {"name": "settlement", "desc": "结算处理"},
 }
 

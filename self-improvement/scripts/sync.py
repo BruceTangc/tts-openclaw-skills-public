@@ -7,7 +7,7 @@ import sys
 import zipfile
 from datetime import datetime
 
-WORKSPACE_DIR = os.path.expanduser("~/.openclaw/workspace")
+WORKSPACE_DIR = os.environ.get("OPENCLAW_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE_DIR") or os.path.expanduser("~/.openclaw/workspace")
 MEMORY_DIR = os.path.join(WORKSPACE_DIR, "memory")
 SKILL_DIR = os.path.join(WORKSPACE_DIR, "skills", "self-improvement")
 

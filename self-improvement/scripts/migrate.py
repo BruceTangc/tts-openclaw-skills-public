@@ -6,7 +6,8 @@ import os
 import sys
 from datetime import datetime
 
-MEMORY_DIR = os.path.expanduser("~/.openclaw/workspace/memory")
+WORKSPACE_DIR = os.environ.get("OPENCLAW_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE_DIR") or os.path.expanduser("~/.openclaw/workspace")
+MEMORY_DIR = os.path.join(WORKSPACE_DIR, "memory")
 LEARNING_TRAIL = os.path.join(MEMORY_DIR, ".learning-trail.json")
 MEMORY_INDEX = os.path.join(MEMORY_DIR, ".memory-index.json")
 

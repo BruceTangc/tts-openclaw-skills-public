@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 
 from pathlib import Path
 
-WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE", os.path.expanduser("~/.openclaw/workspace"))
+WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE_DIR") or os.path.expanduser("~/.openclaw/workspace")
 MEMORY_DIR = os.path.join(WORKSPACE, "memory")
 MEMORY_MD = os.path.join(WORKSPACE, "MEMORY.md")
 TOOLS_MD = os.path.join(WORKSPACE, "TOOLS.md")
@@ -59,8 +59,39 @@ SECTION_HEADERS = {
 }
 
 
+
+_EMOJI_TYPE = {
+    "\u2705": "success", "\u274c": "error",
+    "\U0001f4a1": "insight", "\U0001f4cc": "preference",
+    "\U0001f916": "cycle", "\u26a0": "error", "\u26a0\ufe0f": "error", "\U0001f50d": "insight",
+}
+
+_HEADING_TYPE = {
+    "\u6559\u8bad": "insight", "\u603b\u7ed3": "insight", "\u590d\u76d8": "insight",
+    "\u5f85\u529e": "other", "todo": "other", "\u8ba1\u5212": "other",
+    "\u9519\u8bef": "error", "\u95ee\u9898": "error", "bug": "error", "\u5751": "error",
+    "\u504f\u597d": "preference", "\u559c\u6b22": "preference",
+    "\u6210\u529f": "success", "\u5b8c\u6210": "success", "\u91cd\u5927": "success", "\u91cc\u7a0b\u7891": "success",
+    "\u6539\u8fdb": "insight", "\u5b66\u4e60": "insight", "\u7ecf\u9a8c": "insight",
+}
+
+
+def _infer_heading_type(text):
+    """Guess entry type from a ## heading string."""
+    low = text.lower()
+    for kw, etype in _HEADING_TYPE.items():
+        if kw.lower() in low:
+            return etype
+    return "other"
+
+
 def parse_memory_file(path):
-    """Parse a daily memory file, extracting structured entries."""
+    """Parse a daily memory file, extracting structured entries.
+
+    Supports two formats:
+      1. Structured:   ### HH:MM - description (+ bullet details)
+      2. Free-form:    ## Heading headings with - bullet lists.
+    """
     entries = []
     try:
         with open(path) as f:
@@ -72,25 +103,19 @@ def parse_memory_file(path):
     lines = content.split("\n")
     current_entry = None
 
-    for line in lines:
-        line = line.strip()
+    for raw in lines:
+        line = raw.strip()
         if not line:
             continue
 
-        # Match: ### ✅ HH:MM - description
-        m = re.match(r"###\s+([✅❌💡📌🤖])\s+(\d{2}:\d{2})\s*[-–—]\s*(.+)", line)
+        # Format 1: structured ### HH:MM - desc
+        m = re.match(r"###\s+([\u2705\u274c\U0001f4a1\U0001f4cc\U0001f916\u26a0\U0001f50d])\ufe0f?\s+(\d{2}:\d{2})\s*[\u2013\u2014\u2012]\s*(.+)", line)
         if m:
             emoji, time_str, text = m.groups()
-            entry_type = {
-                "✅": "success", "❌": "error",
-                "💡": "insight", "📌": "preference",
-                "🤖": "cycle",
-            }.get(emoji, "other")
-
             current_entry = {
                 "date": date_str,
                 "time": time_str,
-                "type": entry_type,
+                "type": _EMOJI_TYPE.get(emoji, "other"),
                 "emoji": emoji,
                 "text": text.strip(),
                 "details": [],
@@ -98,12 +123,43 @@ def parse_memory_file(path):
             entries.append(current_entry)
             continue
 
-        # Match: bullet continuation lines
-        if current_entry and (line.startswith("-") or line.startswith("   ")):
-            current_entry["details"].append(line.lstrip("- ").strip())
+        # Format 2: free-form ## Heading starts an entry
+        hm = re.match(r"^#{1,2}\s+(.+)$", line)
+        if hm and not line.startswith("###"):
+            heading_text = hm.group(1).strip()
+            if re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}", heading_text):
+                continue
+            current_entry = {
+                "date": date_str,
+                "time": "00:00",
+                "type": _infer_heading_type(heading_text),
+                "emoji": "\U0001f4dd",
+                "text": heading_text,
+                "details": [],
+            }
+            entries.append(current_entry)
+            continue
+
+        # Bullet / continuation lines (attach to current entry)
+        if current_entry and (line.startswith("-") or line.startswith("*")
+                              or line.startswith("   ") or line.startswith("  ")):
+            current_entry["details"].append(line.lstrip("-* ").strip())
+
+        # Standalone bullet with no current heading: make its own entry
+        elif line.startswith("-") or line.startswith("*"):
+            text = line.lstrip("-* ").strip()
+            if text:
+                current_entry = {
+                    "date": date_str,
+                    "time": "00:00",
+                    "type": "other",
+                    "emoji": "\U0001f4dd",
+                    "text": text,
+                    "details": [],
+                }
+                entries.append(current_entry)
 
     return entries
-
 
 def scan_daily_logs(days=14):
     """Scan daily memory files from the past N days."""
@@ -199,7 +255,7 @@ def extract_principle(entry):
 def is_duplicate(principle, existing_content):
     """Check if a principle is already present in MEMORY.md."""
     p_lower = principle.lower().strip()
-    if len(p_lower) < 10:
+    if len(p_lower) < 4:
         return True  # Too short to be meaningful
 
     content_lower = existing_content.lower()

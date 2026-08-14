@@ -26,11 +26,11 @@ from datetime import datetime, timedelta
 
 
 LEARNING_TRAIL_PATH = os.path.join(
-    os.environ.get("OPENCLAW_WORKSPACE", "/home/admin/.openclaw/workspace"),
+    os.environ.get("OPENCLAW_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE_DIR") or os.path.expanduser("~/.openclaw/workspace"),
     "memory",
     ".learning-trail.json",
 )
-WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE", "/home/admin/.openclaw/workspace")
+WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE_DIR") or os.path.expanduser("~/.openclaw/workspace")
 MEMORY_DIR = os.path.join(WORKSPACE, "memory")
 LEARNINGS_DIR = os.path.join(WORKSPACE, ".learnings")
 
@@ -734,10 +734,14 @@ def next_id(trail, prefix):
 # ── Log an entry ──────────────────────────────────────────────────
 
 def log_entry(trail, entry_type, summary, area="tooling",
-              priority="medium", source="self_discovery",
+              priority="medium", source="self_discovery", scope="AGENT",
               pattern_key=None, details="", suggested_action="",
               reproduce_info="", extra_meta=None):
     """Log a structured learning/error/feature entry."""
+    if scope not in ("TASK", "AGENT", "PROJECT", "USER", "GLOBAL"):
+        scope = "AGENT"
+    # 信任分级（记忆污染防护 ④）：外部来源初始信任度为 False
+    trusted = source != "external"
     today = datetime.now().isoformat()
     date_str = datetime.now().strftime("%Y-%m-%d")
 
@@ -765,8 +769,11 @@ def log_entry(trail, entry_type, summary, area="tooling",
         "status": "pending",
         "logged": today,
         "source": source,
+        "scope": scope,
+        "trusted": trusted,
         "pattern_key": pattern_key,
         "recurrence_count": 0,
+        "seen_dates": [date_str] if pattern_key else [],
         "first_seen": date_str,
         "last_seen": date_str,
     }
@@ -779,6 +786,10 @@ def log_entry(trail, entry_type, summary, area="tooling",
             if existing.get("pattern_key") == pattern_key:
                 existing["recurrence_count"] = existing.get("recurrence_count", 0) + 1
                 existing["last_seen"] = date_str
+                # 修复 P0-1：记录每次出现的日期，供 find_patterns_ready 跨 session 计数
+                seen_dates = existing.setdefault("seen_dates", [])
+                if date_str not in seen_dates:
+                    seen_dates.append(date_str)
                 existing["status"] = "pending"  # Re-activate
                 print(f"🔄 Pattern '{pattern_key}' incremented to {existing['recurrence_count']}x")
                 save_trail(trail)
@@ -793,6 +804,7 @@ def log_entry(trail, entry_type, summary, area="tooling",
         trail["stats"]["total_nodes"] = len(trail.get("graph", {}).get("nodes", []))
     if "total_edges" in trail.get("stats", {}):
         trail["stats"]["total_edges"] = len(trail.get("graph", {}).get("edges", []))
+    trail["stats"]["verified_ok"] = sum(1 for c in trail.get("changes", []) if c.get("verified") and c.get("outcome") != "auto_reverted")
     save_trail(trail)
     print(f"📝 [{eid}] {summary[:60]}")
     return eid
@@ -981,7 +993,11 @@ def find_patterns_ready(trail, min_recurrence=2, min_sessions=2):
         if pk not in sessions_seen:
             sessions_seen[pk] = {"count": 0, "dates": set(), "entries": [], "all_resolved": True}
         sessions_seen[pk]["count"] = max(sessions_seen[pk]["count"], rc)
-        sessions_seen[pk]["dates"].add(e.get("last_seen", ""))
+        # 修复 P0-1：优先用 seen_dates（跨 session 去重日期），老数据回退 last_seen
+        sd = e.get("seen_dates") or [e.get("last_seen", "")]
+        for d in sd:
+            if d:
+                sessions_seen[pk]["dates"].add(d)
         sessions_seen[pk]["entries"].append(e)
         if e.get("status") not in ("promoted", "resolved"):
             sessions_seen[pk]["all_resolved"] = False
@@ -1001,6 +1017,10 @@ def find_patterns_ready(trail, min_recurrence=2, min_sessions=2):
 
 def execute_promotion(trail, pattern_key, count, entry):
     """Actually promote a pattern by modifying the target file and recording a change for verification."""
+    # 记忆污染防护 ④：低信任来源（external）不自动提升，需人工确认
+    if not entry.get("trusted", True):
+        print(f"   ⛔ 低信任来源 [{entry.get('source')}]，跳过自动提升（需人工确认）：{entry.get('summary','')[:50]}")
+        return None
     target = suggest_promotion(entry)
     summary = entry.get("summary", "")
     target_path = os.path.join(WORKSPACE, target)
@@ -1125,7 +1145,7 @@ def auto_detect_daily(trail):
         for trigger_type, patterns in detect_patterns:
             for pat in patterns:
                 if re.search(pat, text_lower):
-                    summary_text = stripped.lstrip("#\u2705\u274c\ud83d\udca1\ud83d\udccc\ud83e\udd16 ").strip()[:120]
+                    summary_text = stripped.lstrip("#\u2705\u274c\U0001f4a1\U0001f4cc\U0001f916 ").strip()[:120]
                     # Dedup: skip if already logged
                     already_logged = any(
                         summary_text[:40] in e.get("summary", "")[:40]
@@ -1251,7 +1271,7 @@ def generate_proposals(trail):
 
     # 1. Patterns ready for promotion
     ready = find_patterns_ready(trail)
-    for entry in ready:
+    for pk0, count0, entry in ready:
         target = suggest_promotion(entry)
         pk = entry.get("pattern_key", "unknown")
         # Calculate actual recurrence count across all entries with this pattern
@@ -1441,6 +1461,128 @@ def show_status(trail):
             print(f"   • [{r.get('id','?')}] {r.get('summary','')[:60]} → {suggest_promotion(r)}")
 
 
+def aggregate_bus_events(trail, lock=True):
+    """聚合中央 Learning Bus（memory/agents/bus.json）的待处理事件。
+
+    多 Agent 学习 OS：厂长/财神等 Agent 通过 bus.py --central 上报经验，
+    全局学习引擎在这里统一收取、去重、写入 learning trail。
+
+    V3.2.1 增强：
+    - 并发锁：避免 cron 与手动 --cycle 同时处理造成重复写
+    - 增量游标：bus.stats.last_scan 记录上次扫描时间，无新 pending 则快速跳过
+    - 跨 Agent 验证：scope=PROJECT/GLOBAL 的事件标记 xverify 供后续验证
+    返回 (新增数, 已处理数, 是否跳过)。
+    """
+    central_bus = os.path.join(WORKSPACE, "memory", "agents", "bus.json")
+    if not os.path.exists(central_bus):
+        return 0, 0, False
+    try:
+        with open(central_bus, encoding="utf-8") as f:
+            bus = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return 0, 0, False
+
+    # 并发锁：防止多个 --cycle 同时处理（cron + 手动）
+    lock_fd = None
+    if lock:
+        import fcntl
+        lock_path = os.path.join(WORKSPACE, "memory", "agents", ".bus.lock")
+        try:
+            lock_fd = open(lock_path, "w")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, IOError, ImportError):
+            if lock_fd:
+                lock_fd.close()
+            return 0, 0, True  # 有另一个周期在跑，跳过本轮
+
+    try:
+        events = bus.get("events", [])
+        pending = [e for e in events if e.get("status") == "pending"]
+        if not pending:
+            # 无新事件：更新 last_scan 后快速返回
+            bus.setdefault("stats", {})["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                with open(central_bus, "w", encoding="utf-8") as f:
+                    json.dump(bus, f, indent=2, ensure_ascii=False)
+            except OSError:
+                pass
+            return 0, 0, False
+
+        # 增量游标：记录本次扫描时间与待处理数
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        stats = bus.setdefault("stats", {})
+        stats["last_scan"] = now_ts
+        stats["last_pending_count"] = len(pending)
+
+        # 去重：用 (topic, content) 检查是否已写入 trail
+        existing_keys = set()
+        for ent in trail.get("entries", []):
+            k = (ent.get("topic", ""), ent.get("summary", "")[:80])
+            existing_keys.add(k)
+
+        added = 0
+        for ev in pending:
+            topic = ev.get("topic") or ""
+            content = (ev.get("content") or "").strip()
+            if not content:
+                continue
+            summary = f"[{topic}] {content}" if topic else content
+            key = (topic, summary[:80])
+            if key in existing_keys:
+                ev["status"] = "resolved"
+                ev["resolved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                continue
+            existing_keys.add(key)
+
+            scope = ev.get("scope", "AGENT")
+            source_agent = ev.get("source_agent") or "?"
+            etype = {
+                "error": "error",
+                "success": "learning",
+                "correction": "correction",
+                "knowledge_gap": "knowledge_gap",
+                "best_practice": "best_practice",
+            }.get(ev.get("event"), "learning")
+            priority = "high" if ev.get("event") == "error" else "medium"
+
+            # 跨 Agent 验证：PROJECT/GLOBAL 范围需要多源确认
+            needs_xverify = scope in ("PROJECT", "GLOBAL")
+            log_entry(
+                trail,
+                etype,
+                summary[:120],
+                area=source_agent if source_agent not in ("?", "") else "agent",
+                priority=priority,
+                source="external",
+                scope=scope,
+                pattern_key=topic or None,
+                details=content,
+                extra_meta={
+                    "source_agent": source_agent,
+                    "bus_event_id": ev.get("id"),
+                    "xverify": "pending" if needs_xverify else "n/a",
+                },
+            )
+            added += 1
+            ev["status"] = "resolved"
+            ev["resolved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        bus["stats"]["pending"] = len([e for e in events if e.get("status") == "pending"])
+        bus["stats"]["last_scan"] = now_ts
+        try:
+            with open(central_bus, "w", encoding="utf-8") as f:
+                json.dump(bus, f, indent=2, ensure_ascii=False)
+        except OSError:
+            pass
+        return added, len(pending), False
+    finally:
+        if lock_fd:
+            try:
+                import fcntl
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            lock_fd.close()
 def run_full_cycle(trail, auto_promote=True, auto_summary=True):
     now = datetime.now()
     trail["last_cycle"] = now.isoformat()
@@ -1448,6 +1590,19 @@ def run_full_cycle(trail, auto_promote=True, auto_summary=True):
 
     actions_taken = []
     print(f"🔄 Learning Cycle — {now.strftime('%Y-%m-%d %H:%M')}\n")
+
+    # Phase 0: 多 Agent — Aggregate central Learning Bus events
+    print(f"🔌 Phase 0: Aggregate Learning Bus")
+    try:
+        bus_added, bus_total, bus_skipped = aggregate_bus_events(trail)
+        if bus_skipped:
+            print(f"   Skipped: another learning cycle is running (lock held)")
+        else:
+            print(f"   {bus_added}/{bus_total} cross-agent event(s) ingested")
+            if bus_added > 0:
+                actions_taken.append(f"🔌 Ingested {bus_added} cross-agent learning event(s) from Bus")
+    except Exception as e:
+        print(f"   Bus aggregation failed: {e}")
 
     # Phase 1: 记忆 — Check recent memory
     print(f"📁 Phase 1: Memory scan")
@@ -1568,7 +1723,7 @@ def run_full_cycle(trail, auto_promote=True, auto_summary=True):
     stats = trail.get("stats", {})
     print(f"\n📊 Final Summary")
     print(f"   Entries: {stats.get('total_entries',0)} | Changes: {stats.get('total_changes',0)} | Verified: {stats.get('verified_ok',0)}")
-    print(f"   Promoted: {promoted_count} | Graph: {stats.get('total_nodes',0)}n/{stats.get('total_edges',0)}e")
+    print(f"   Promoted: {promoted_count} | Graph: {stats.get('total_nodes',0)} nodes / {stats.get('total_edges',0)} edges")
 
     if actions_taken:
         print(f"\n⚡ Actions taken this cycle:")
@@ -1603,7 +1758,7 @@ def main():
                         choices=["critical", "high", "medium", "low"])
     parser.add_argument("--pattern-key", default=None, help="Pattern key for dedup")
     parser.add_argument("--source", default=None,
-                        choices=["conversation", "error", "user_feedback", "self_discovery"],
+                        choices=["conversation", "error", "user_feedback", "self_discovery", "external"],
                         help="Log entry source (default: self_discovery)")
     parser.add_argument("--add-change", "--record-change", nargs=3, metavar=("TARGET", "CHANGE", "HYPOTHESIS"),
                         help="Record a change with verification")
@@ -1635,10 +1790,17 @@ def main():
                         help="Auto-link a node to existing nodes based on content similarity")
     parser.add_argument("--graph-rank", nargs=1, metavar="QUERY",
                         help="Rank graph nodes by query using Personalized PageRank")
-    parser.add_argument("--graph-dedup", type=float, default=0.0, metavar="THRESHOLD",
+    parser.add_argument("--graph-dedup", type=float, default=None, metavar="THRESHOLD",
                         help="Find semantically duplicate nodes (threshold 0.0-1.0)")
     parser.add_argument("--merge-nodes", nargs=2, metavar=("NODE_A", "NODE_B"),
                         help="Merge two duplicate nodes by ID")
+    parser.add_argument("--rollback", nargs=1, metavar="CHANGE_ID",
+                        help="回滚一个已应用的变更（V3.2）")
+    parser.add_argument("--demote", nargs=1, metavar="ENTRY_ID",
+                        help="降低一个学习条目的 scope（V3.2），配合 --to 使用")
+    parser.add_argument("--to", default=None,
+                        choices=["TASK", "AGENT", "PROJECT", "USER", "GLOBAL"],
+                        help="目标 scope（--demote 用）")
     args = parser.parse_args()
 
     trail = ensure_trail()
@@ -1674,7 +1836,7 @@ def main():
         log_entry(trail, etype, summary,
                   area=args.area, priority=args.priority,
                   pattern_key=args.pattern_key,
-                  source=args.source)
+                  source=args.source or "self_discovery")
     elif args.add_change:
         target, change, hypothesis = args.add_change
         record_change(trail, target, change, hypothesis)
@@ -1773,7 +1935,7 @@ def main():
         else:
             print(f"No duplicate pair found for [{nid_a}] ↔ [{nid_b}]")
             print("  Run --graph-dedup first to find duplicates")
-    elif args.graph_dedup > 0:
+    elif args.graph_dedup is not None:
         threshold = args.graph_dedup
         dups = semantic_dedup(trail, threshold)
         if dups:
@@ -1785,6 +1947,90 @@ def main():
             print(f"\n  To merge: --merge-nodes {dups[0]['node_a']} {dups[0]['node_b']}")
         else:
             print(f"No duplicates found above threshold {threshold}")
+    elif args.rollback:
+        cid = args.rollback[0]
+        found = False
+        for change in trail.get("changes", []):
+            if change.get("id") == cid:
+                # 真实回滚：从目标文件移除该行（pattern_promotion 类型）
+                target = change.get("target")
+                summary = change.get("change", "")
+                if target and target in ("MEMORY.md", "TOOLS.md", "AGENTS.md", "SOUL.md"):
+                    target_path = os.path.join(WORKSPACE, target)
+                    try:
+                        lines = open(target_path, encoding="utf-8").read().split("\n")
+                        exact = "- " + summary
+                        kept = [l for l in lines if l.strip() != exact.strip()]
+                        if len(kept) < len(lines):
+                            open(target_path, "w", encoding="utf-8").write("\n".join(kept))
+                            print(f"   🗑️ 从 {target} 移除了对应行")
+                        # 同步移除 principles 里的对应条目
+                        trail["principles"] = [p for p in trail.get("principles", []) if p.strip() != exact.strip()]
+                    except Exception as e:
+                        print(f"   ⚠️ 文件回滚失败: {e}")
+                # 恢复 source_entry 及其同 pattern 的所有 entry 为 pending (P1-3)
+                se = change.get("source_entry")
+                if se:
+                    for e in trail.get("entries", []):
+                        if e.get("id") == se:
+                            e["status"] = "pending"
+                            break
+                change["outcome"] = "reverted"
+                change["verified"] = True
+                change["reverted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                trail["stats"]["reverted"] = trail["stats"].get("reverted", 0) + 1
+                save_trail(trail)
+                print(f"↩️ 已回滚变更 [{cid}]: {change.get('change','')[:60]}")
+                print(f"   ✓ 目标文件行已移除，条目恢复为 pending")
+                found = True
+                break
+        if not found:
+            print(f"❌ 未找到变更 [{cid}]（试试 --trail 查看所有 changes）")
+    elif args.demote:
+        eid = args.demote[0]
+        if not args.to:
+            print("❌ 请用 --to 指定目标 scope（TASK|AGENT|PROJECT|USER|GLOBAL）")
+        elif args.to not in ("TASK", "AGENT", "PROJECT", "USER", "GLOBAL"):
+            print(f"❌ 非法 scope: {args.to}（允许: TASK|AGENT|PROJECT|USER|GLOBAL）")
+        else:
+            found = False
+            for entry in trail.get("entries", []):
+                if entry.get("id") == eid:
+                    old_scope = entry.get("scope", "AGENT")
+                    entry["scope"] = args.to
+                    # 降级：如果原来是 promoted，回滚目标文件行并恢复为 pending
+                    if entry.get("status") == "promoted":
+                        target = suggest_promotion(entry)
+                        summary = entry.get("summary", "")
+                        if target and target in ("MEMORY.md", "TOOLS.md", "AGENTS.md", "SOUL.md"):
+                            target_path = os.path.join(WORKSPACE, target)
+                            try:
+                                lines = open(target_path, encoding="utf-8").read().split("\n")
+                                exact = "- " + summary
+                                kept = [l for l in lines if l.strip() != exact.strip()]
+                                if len(kept) < len(lines):
+                                    open(target_path, "w", encoding="utf-8").write("\n".join(kept))
+                                    print(f"   🗑️ 从 {target} 移除了对应行（降级回滚）")
+                                trail["principles"] = [p for p in trail.get("principles", []) if p.strip() != exact.strip()]
+                            except Exception as e:
+                                print(f"   ⚠️ 文件回滚失败: {e}")
+                        entry["status"] = "pending"
+                    save_trail(trail)
+                    print(f"⬇️ 已降低 [{eid}] 的 scope: {old_scope} → {args.to}")
+                    print(f"   内容: {entry.get('summary','')[:60]}")
+                    found = True
+                    break
+            if not found:
+                # 也可能在 watchlist / principles
+                for w in trail.get("watchlist", []):
+                    if w.get("id") == eid or w.get("pattern_key") == eid:
+                        w["scope"] = args.to
+                        save_trail(trail)
+                        print(f"⬇️ 已降低 watchlist [{eid}] 的 scope → {args.to}")
+                        found = True
+                        break
+            if not found:
+                print(f"❌ 未找到条目 [{eid}]（试试 --trail 查看所有 entries）")
     else:
         show_status(trail)
 

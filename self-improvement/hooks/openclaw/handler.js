@@ -39,7 +39,7 @@ export default async function selfImprovementHook(ctx) {
     // Pending patterns (≥2 occurrences)
     const patternGroups = {};
     for (const e of (trail.entries || [])) {
-      const pk = e.pattern_key || e.pattern_key;
+      const pk = e.pattern_key;
       if (!pk || e.status === "resolved" || e.status === "promoted") continue;
       if (!patternGroups[pk]) {
         patternGroups[pk] = { count: 0, entries: [], summary: e.summary };

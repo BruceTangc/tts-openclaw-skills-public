@@ -18,7 +18,7 @@ import glob
 from datetime import datetime, timedelta
 import re
 
-WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE", "/home/admin/.openclaw/workspace")
+WORKSPACE = os.environ.get("OPENCLAW_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE_DIR") or os.path.expanduser("~/.openclaw/workspace")
 MEMORY_DIR = os.path.join(WORKSPACE, "memory")
 LEARNING_TRAIL_PATH = os.path.join(MEMORY_DIR, ".learning-trail.json")
 
