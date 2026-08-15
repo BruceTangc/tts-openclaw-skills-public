@@ -80,3 +80,11 @@ description: >
 ## 数据库
 
 默认使用 `database/legal.db`（由 `database/init_db.py` 初始化）。
+
+## 输出格式
+
+- **默认输出**：Markdown（.md）——合同草稿、审核报告、谈判回复均以 Markdown 呈现
+- **正式交付格式**：本 skill 本身不含 PDF/Word 生成脚本
+  - 环境装有 python-docx 时，可将 Markdown 转换为 Word（.docx）
+  - 环境装有 LibreOffice 时，可进一步转换为 PDF
+  - 需要正式文件时，请先确认运行环境是否具备上述转换工具
