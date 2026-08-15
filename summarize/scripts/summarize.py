@@ -241,6 +241,120 @@ def verify_coverage(summary_path, source_path):
     }
 
 
+# ── 6.5 结构化提取 ──────────────────────────────────────
+
+
+def cmd_extract(args):
+    """--extract <file> [--mode MODE]: 结构化提取骨架。
+
+    用规则从文本中提取：关键数字/日期、书名号专名、实体候选（CJK 词组）、
+    句子级候选 facts，并输出 Summarize 标准 schema 骨架，供 LLM 填充
+    facts/claims/inferences 等语义字段。此命令是"骨架"，不做语义判断。
+    """
+    import re as _re
+    text = read_text(args.extract)
+    stats = text_stats(text)
+
+    # 数字 / 日期 / 百分比
+    numbers = sorted(set(_re.findall(r"\d{2,}", text)))[:50]
+    dates = sorted(set(_re.findall(r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?", text)))[:30]
+    percents = sorted(set(_re.findall(r"\d+(?:\.\d+)?%", text)))[:30]
+
+    # 书名号专名
+    book_marks = sorted(set(_re.findall(r"《([^》]+)》", text)))[:30]
+
+    # 实体候选：连续 CJK 2-4 字词，过滤停用词 + 频率 >=2 或长度>=4
+    stop = ("我们", "他们", "你们", "这个", "那个", "因为", "所以", "但是",
+            "以及", "通过", "关于", "对于", "如果", "虽然", "同时", "此外",
+            "主要", "重要", "当前", "现在", "问题", "情况", "方面", "部分",
+            "方式", "过程", "结果", "影响", "作用", "意义", "目的", "目标",
+            "要求", "标准", "规定", "政策", "制度", "体系", "结构", "类型",
+            "数量", "质量", "程度", "水平", "范围", "领域", "方向", "趋势",
+            "状况", "状态", "条件", "环境", "因素", "原因", "效果", "效率",
+            "成本", "收益", "风险", "机会", "挑战", "优势", "劣势", "特点",
+            "特征", "属性", "参数", "指标", "认为", "表示", "说明", "指出",
+            "建议", "希望", "计划", "开始", "结束", "完成", "实现", "达到",
+            "增加", "减少", "提高", "降低", "改善", "优化", "加强", "促进",
+            "推动", "负责", "参与", "配合", "协调", "组织", "安排", "部署",
+            "执行", "实施", "落实", "跟进", "跟踪", "监控", "监督", "检查",
+            "审核", "评估", "评价", "反馈", "总结", "记录", "保存", "提交",
+            "上报", "审批", "批准", "同意", "拒绝", "接受", "采纳", "采用",
+            "应用", "利用", "基于", "依据", "根据", "按照", "遵循", "遵守",
+            "符合", "满足", "突破", "创新", "研发", "设计", "规划", "策略",
+            "战略", "机制", "体制", "架构", "框架", "平台", "工具", "设备",
+            "材料", "资源", "资金", "资产", "费用", "支出", "收入", "利润",
+            "增长", "下降", "波动", "报错", "失败", "错误", "成功", "正常",
+            "异常", "修复", "排查", "定位", "解决", "覆盖", "丢失", "污染",
+            "兼容", "稳定", "可靠", "准确", "及时", "最新", "权威", "官方",
+            "真实", "完整", "系统", "数据", "核算", "分析", "管理", "操作",
+            "功能", "信息", "相关", "内容", "方法", "使用", "开发", "测试",
+            "产品", "用户", "服务", "支持", "处理", "生成", "存在", "方案",
+            "改进", "同步", "延迟", "联合", "提出", "之间", "发现", "需要",
+            "进行", "可以", "应该", "必须")
+    cjk_words = {}
+    for m in _re.finditer(r"[\u4e00-\u9fff]{2,}", text):
+        w = m.group(0)
+        # 只取 2-4 字连续词作为实体候选（长句整体提取会产生含停用词的噪声）
+        if len(w) > 4:
+            continue
+        if w in stop:
+            continue
+        cjk_words[w] = cjk_words.get(w, 0) + 1
+    entity_candidates = sorted(
+        (w for w, c in cjk_words.items() if c >= 2 or len(w) >= 3),
+        key=lambda w: (-cjk_words[w], -len(w)))[:30]
+
+    # 句子级候选 facts（按句号/感叹号切分，取长度适中的）
+    sentences = [s.strip() for s in _re.split(r"[。！？；\n]", text) if 8 <= len(s.strip()) <= 80]
+    fact_candidates = sentences[:20]
+
+    result = {
+        "status": "success",
+        "mode": args.mode or "standard",
+        "summary": {
+            "title": os.path.basename(args.extract),
+            "one_liner": "",
+            "key_points": [],
+        },
+        "extracted_candidates": {
+            "numbers": numbers,
+            "dates": dates,
+            "percents": percents,
+            "book_marks": book_marks,
+            "entity_candidates": entity_candidates,
+            "fact_candidates": fact_candidates,
+        },
+        "structured": {
+            "facts": [],
+            "claims": [],
+            "conclusions": [],
+            "inferences": [],
+            "evidence": [],
+            "decisions": [],
+            "action_items": [],
+            "risks": [],
+            "open_questions": [],
+            "entities": [],
+            "relations": [],
+        },
+        "state": {"completed": [], "in_progress": [], "pending": []},
+        "integrations": {
+            "memory_candidates": [],
+            "ontology_candidates": {"entities": [], "relations": []},
+            "experience": None,
+        },
+        "sources": [{"source_id": os.path.basename(args.extract), "title": os.path.basename(args.extract)}],
+        "quality": {
+            "faithfulness": None, "completeness": None, "relevance": None,
+            "compression": None, "redundancy": None, "attribution": None, "overall": None,
+        },
+        "warnings": ["extract 是规则骨架，语义字段（facts/claims/inferences 等）需 LLM 填充"],
+        "stats": stats,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 # ── main ─────────────────────────────────────────────────
 
 
@@ -255,6 +369,8 @@ def main():
     parser.add_argument("--clean", metavar="FILE", help="内容清洗")
     parser.add_argument("--stats", metavar="FILE", help="文本统计")
     parser.add_argument("--verify", nargs=2, metavar=("SUMMARY", "SOURCE"), help="可追溯验证")
+    parser.add_argument("--extract", metavar="FILE", help="结构化提取骨架")
+    parser.add_argument("--mode", default=None, metavar="MODE", help="提取模式 (quick/standard/deep/agent 等)")
     args = parser.parse_args()
 
     if args.chunk:
@@ -312,6 +428,8 @@ def main():
         print(json.dumps(text_stats(text), ensure_ascii=False, indent=2))
         return 0
 
+    if args.extract:
+        return cmd_extract(args)
     if args.verify:
         res = verify_coverage(args.verify[0], args.verify[1])
         print("摘要关键 token: {0} | 源中可追溯: {1} | 比例: {2}".format(
