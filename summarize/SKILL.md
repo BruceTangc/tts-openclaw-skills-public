@@ -130,7 +130,7 @@ result:
 python3 scripts/summarize.py --chunk <file> --overlap 0.15     # 语义分块
 python3 scripts/summarize.py --dedup <file>                    # 多文档去重
 python3 scripts/summarize.py --aggregate <dir>                 # 多文档聚合为单输入
-python3 scripts/summarize.py --extract <text> --mode agent     # 结构化提取骨架
+python3 scripts/summarize.py --extract <text-or-file> --mode agent  # 结构化提取骨架（传文本或文件路径均可）
 ```
 
 ## 12. 铁律总纲

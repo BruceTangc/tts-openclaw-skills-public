@@ -245,14 +245,22 @@ def verify_coverage(summary_path, source_path):
 
 
 def cmd_extract(args):
-    """--extract <file> [--mode MODE]: 结构化提取骨架。
+    """--extract <text-or-file> [--mode MODE]: 结构化提取骨架。
 
-    用规则从文本中提取：关键数字/日期、书名号专名、实体候选（CJK 词组）、
-    句子级候选 facts，并输出 Summarize 标准 schema 骨架，供 LLM 填充
+    参数既可以是直接文本（--extract "行情时间戳必须验证"），也可以是文件
+    路径（--extract report.txt）；存在同名文件时按文件读取，否则按文本处理。
+    用规则提取：关键数字/日期、书名号专名、实体候选（CJK 词组）、句子级
+    fact 候选，并输出 Summarize 标准 schema 骨架，供 LLM 填充
     facts/claims/inferences 等语义字段。此命令是"骨架"，不做语义判断。
     """
     import re as _re
-    text = read_text(args.extract)
+    arg = args.extract
+    if os.path.isfile(arg):
+        text = read_text(arg)
+        _src_label = os.path.basename(arg)
+    else:
+        text = arg
+        _src_label = "inline-text"
     stats = text_stats(text)
 
     # 数字 / 日期 / 百分比
@@ -312,7 +320,7 @@ def cmd_extract(args):
         "status": "success",
         "mode": args.mode or "standard",
         "summary": {
-            "title": os.path.basename(args.extract),
+            "title": _src_label,
             "one_liner": "",
             "key_points": [],
         },
@@ -343,7 +351,7 @@ def cmd_extract(args):
             "ontology_candidates": {"entities": [], "relations": []},
             "experience": None,
         },
-        "sources": [{"source_id": os.path.basename(args.extract), "title": os.path.basename(args.extract)}],
+        "sources": [{"source_id": _src_label, "title": _src_label}],
         "quality": {
             "faithfulness": None, "completeness": None, "relevance": None,
             "compression": None, "redundancy": None, "attribution": None, "overall": None,
