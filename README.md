@@ -2,7 +2,7 @@
 
 OpenClaw 公共 skills 集合 — 通用、可复用的 Agent 能力库。
 
-本仓库包含 **4 个 skill**，每个 skill 都是一个独立目录，结构统一：
+本仓库包含 **8 个 skill**，每个 skill 都是一个独立目录，结构统一：
 
 ```
 <skill-name>/
@@ -20,6 +20,9 @@ OpenClaw 公共 skills 集合 — 通用、可复用的 Agent 能力库。
 | [self-improvement](self-improvement/) | 自主记忆与自我学习系统 V3.2（经验收集、知识图谱、多 Agent 学习、行为优化） | Python |
 | [tavily-web-search](tavily-web-search/) | Tavily API 集成：网页搜索、内容提取、用量查询（自动更新） | Node.js |
 | [caishen/company-legal](caishen/company-legal/) | 企业法务 AI（合同起草/审核/谈判/合规/法律问答） | YAML + SQL + Python |
+| [ontology](ontology/) | 语义知识层（类型化知识图谱、实体/关系建模、影响分析、提案治理） | Python |
+| [agent-browser](agent-browser/) | 全局浏览器自动化基础设施（统一、安全、可恢复的网页交互） | OpenClaw browser 插件 |
+| [summarize](summarize/) | 通用信息压缩与结构化提取（总结/抽取事实/决策/行动项/风险，对接 Memory/Ontology/Self-Evolving） | Python |
 
 ## 🚀 快速使用
 

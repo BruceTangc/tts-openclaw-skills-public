@@ -1,0 +1,15 @@
+{
+  "name": "agent-browser",
+  "version": "1.0.0",
+  "description": "Global browser automation infrastructure for OpenClaw — unified, safe, recoverable web interaction via the standard browser API.",
+  "author": "brucetangc",
+  "homepage": "https://github.com/BruceTangc/tts-openclaw-skills-public",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BruceTangc/tts-openclaw-skills-public.git",
+    "directory": "agent-browser"
+  },
+  "dependencies": {
+    "openclaw": ">=2026.7"
+  }
+}
