@@ -34,24 +34,22 @@ def score_text(text: str) -> dict:
         group = rules.get(level, {})
         for rule_id, rule in group.items():
             keywords = rule.get("keywords", [])
-            for kw in keywords:
-                # 规则ID以 missing_ 开头时使用反向匹配（找不到才扣分）
-                is_negative = rule_id.startswith("missing_")
-                if is_negative:
-                    # 全部关键词都不在文本中才触发
-                    matched = all(kw not in text for kw in keywords)
-                    if matched:
-                        dim = rule.get("dimension", "争议解决与其他")
-                        weight = dimensions.get(dim, {}).get("weight", 5)
-                        ratio = rule.get("deduct_ratio", 0.5)
-                        points = weight * ratio
-                        new_val = min(weight, deduct.get(dim, 0) + points)
-                        deduct[dim] = new_val
-                        hits.append({"rule": rule_id, "level": level, "keyword": "|".join(keywords), "dimension": dim, "risk": rule.get("risk"), "suggestion": rule.get("suggestion"), "deduct": points})
-                    break  # 一次性判断所有关键词
-                else:
-                    matched = kw in text
-                    if matched:
+            is_negative = rule_id.startswith("missing_")
+            if is_negative:
+                # 反向匹配：全部关键词都不在文本中才触发（如缺失条款检查）
+                matched = all(kw not in text for kw in keywords)
+                if matched:
+                    dim = rule.get("dimension", "争议解决与其他")
+                    weight = dimensions.get(dim, {}).get("weight", 5)
+                    ratio = rule.get("deduct_ratio", 0.5)
+                    points = weight * ratio
+                    new_val = min(weight, deduct.get(dim, 0) + points)
+                    deduct[dim] = new_val
+                    hits.append({"rule": rule_id, "level": level, "keyword": "|".join(keywords), "dimension": dim, "risk": rule.get("risk"), "suggestion": rule.get("suggestion"), "deduct": points})
+            else:
+                # 正向匹配：遍历所有关键词，命中任一即记录该规则一次
+                for kw in keywords:
+                    if kw in text:
                         dim = rule.get("dimension", "争议解决与其他")
                         weight = dimensions.get(dim, {}).get("weight", 5)
                         ratio = rule.get("deduct_ratio", 0.5)
@@ -68,7 +66,7 @@ def score_text(text: str) -> dict:
                             "suggestion": rule.get("suggestion"),
                             "deduct": points
                         })
-                    break  # 同一规则命中一次即可
+                        break  # 同一规则命中一次即可
 
     total_deduct = sum(deduct.values())
     final = max(0, base - total_deduct)
@@ -77,9 +75,10 @@ def score_text(text: str) -> dict:
     levels = engine.get("levels", {})
     level_name = "Critical"
     action = ""
-    for rng, info in levels.items():
-        lo, hi = map(int, rng.split("-"))
-        if lo <= final <= hi:
+    # 按区间下限降序遍历，解决 89.5 等小数落不进整数区间的问题
+    for rng, info in sorted(levels.items(), key=lambda x: -int(x[0].split("-")[0])):
+        lo, _hi = map(int, rng.split("-"))
+        if final >= lo:
             level_name = info["level"]
             action = info["action"]
             break
