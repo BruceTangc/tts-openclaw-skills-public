@@ -1,0 +1,60 @@
+# 合同风险评分引擎 v7.1
+
+# 满分 100，分数越高风险越低
+# 计分方式：基础分 100，命中规则按权重扣分，可叠加，最低 0
+
+base_score: 100
+
+dimensions:
+  主体信息:
+    weight: 15
+    description: 合同主体资格、授权、关联关系
+
+  付款风险:
+    weight: 20
+    description: 预付款比例、付款节点、发票与结算
+
+  交付与验收:
+    weight: 15
+    description: 交付标准、验收流程、不合格处理
+
+  违约责任:
+    weight: 20
+    description: 责任上限、赔偿范围、对等性
+
+  知识产权:
+    weight: 15
+    description: 成果归属、许可范围、侵权责任
+
+  保密与数据:
+    weight: 10
+    description: 保密期限、数据安全、出境与合规
+
+  争议解决与其他:
+    weight: 5
+    description: 管辖、送达、单方解除、反商业贿赂等
+
+# 风险等级映射（基于最终得分）
+levels:
+  90-100:
+    level: Low
+    label: 低风险
+    action: 可内部审批后签署
+  70-89:
+    level: Medium
+    label: 中风险
+    action: 建议修改后签署，重点条款需确认
+  50-69:
+    level: High
+    label: 高风险
+    action: 必须修改核心条款，建议法务深度审核
+  0-49:
+    level: Critical
+    label: 极高风险
+    action: 强烈建议暂停签署，由执业律师全面审核
+
+# 扣分规则说明（与 review_rules.yaml 配合）
+# - 命中 high_risk 规则：按该维度 weight 的 60%-100% 扣分
+# - 命中 medium_risk 规则：按该维度 weight 的 30%-50% 扣分
+# - 同一维度多次命中可叠加，但不超过该维度 weight
+# - 最终得分 = max(0, base_score - 总扣分)

@@ -1,0 +1,117 @@
+# 合同审核高风险规则库 v7.1
+# 用于自动识别问题条款并给出修改方向
+
+high_risk:
+
+  payment_full_prepaid:
+    keywords:
+      - "100%预付款"
+      - "签约后支付全部"
+      - "合同签订后一次性支付"
+      - "全额预付"
+    dimension: 付款风险
+    risk: 全额预付款风险极高
+    suggestion: 调整为阶段付款（建议 30% 签约 + 40% 阶段验收 + 30% 终验）
+    deduct_ratio: 1.0
+
+  unlimited_liability:
+    keywords:
+      - "无限责任"
+      - "承担全部损失"
+      - "赔偿全部直接和间接损失"
+      - "不设责任上限"
+    dimension: 违约责任
+    risk: 无限责任风险
+    suggestion: 增加责任上限（通常建议不超过合同总金额或已付金额的 100%-200%），并排除间接损失、利润损失
+    deduct_ratio: 1.0
+
+  ip_to_counterparty:
+    keywords:
+      - "知识产权归乙方所有"
+      - "所有成果归对方所有"
+      - "知识产权全部转移"
+      - "甲方放弃所有权利"
+    dimension: 知识产权
+    risk: 知识产权归属严重不利
+    suggestion: 明确项目成果、代码、文档、数据的知识产权归属，通常应归委托方或双方共有并约定使用范围
+    deduct_ratio: 1.0
+
+  unilateral_termination:
+    keywords:
+      - "甲方有权单方解除"
+      - "无需理由解除合同"
+      - "随时终止且不承担违约责任"
+    dimension: 争议解决与其他
+    risk: 单方任意解除权
+    suggestion: 删除或严格限制单方解除条件，并明确解除后的结算与责任
+    deduct_ratio: 0.8
+
+  no_acceptance_standard:
+    keywords:
+      - "验收合格"
+      - "甲方确认即可"
+      - "无明确验收标准"
+    dimension: 交付与验收
+    risk: 验收标准缺失或完全主观
+    suggestion: 增加可量化、可客观判断的验收标准与流程，明确不合格时的整改义务与期限
+    deduct_ratio: 0.7
+
+  data_outbound_risk:
+    keywords:
+      - "数据传输至境外"
+      - "跨境提供数据"
+      - "境外服务器存储"
+    dimension: 保密与数据
+    risk: 数据出境合规风险
+    suggestion: 评估是否触发数据出境安全评估或标准合同要求，补充合规条款
+    deduct_ratio: 0.8
+
+  jurisdiction_unfavorable:
+    keywords:
+      - "由乙方所在地法院管辖"
+      - "被告住所地法院"
+      - "对方所在地仲裁"
+    dimension: 争议解决与其他
+    risk: 管辖对己方不利
+    suggestion: 争取约定己方所在地法院或双方均可接受的仲裁机构
+    deduct_ratio: 0.5
+
+medium_risk:
+
+  vague_scope:
+    keywords:
+      - "包括但不限于"
+      - "等相关服务"
+      - "其他合理需求"
+    dimension: 交付与验收
+    risk: 服务范围或交付内容过于模糊
+    suggestion: 尽量用附件明确工作范围、交付物清单与边界
+    deduct_ratio: 0.4
+
+  unequal_penalty:
+    keywords:
+      - "甲方违约需支付"
+      - "乙方违约责任较轻"
+    dimension: 违约责任
+    risk: 违约责任明显不对等
+    suggestion: 调整为对等或合理比例的违约责任
+    deduct_ratio: 0.5
+
+  short_confidentiality:
+    keywords:
+      - "保密期限一年"
+      - "保密期为合同终止后6个月"
+    dimension: 保密与数据
+    risk: 保密期限过短
+    suggestion: 核心商业秘密建议保密期限 3-5 年或至公开为止
+    deduct_ratio: 0.4
+
+  missing_anti_bribery:
+    keywords:
+      - "反商业贿赂"
+      - "廉洁条款"
+    dimension: 争议解决与其他
+    risk: 缺少反商业贿赂条款（负面匹配时使用）
+    suggestion: 建议补充反商业贿赂与合规声明条款
+    deduct_ratio: 0.3
+    # 注意：此条通常用于“未找到相关条款”时的检查逻辑

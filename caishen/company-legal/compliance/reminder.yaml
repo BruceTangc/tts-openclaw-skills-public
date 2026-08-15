@@ -1,0 +1,29 @@
+# 合同与合规提醒规则
+
+contract_expiry:
+  description: 合同到期提醒
+  rules:
+    - days_before: 90
+      action: 提前提醒业务与法务，评估是否续约
+    - days_before: 30
+      action: 必须确认续约或终止安排
+    - days_before: 7
+      action: 紧急提醒，避免自动续约或服务中断风险
+
+confidentiality_period:
+  description: 保密期限届满前提醒
+  rules:
+    - days_before: 60
+      action: 检查是否仍有需要继续保密的核心信息
+
+non_compete:
+  description: 竞业限制期限
+  rules:
+    - days_before: 30
+      action: 提醒支付竞业补偿（如适用）并评估是否需要延长
+
+license_ip:
+  description: 知识产权许可到期
+  rules:
+    - days_before: 60
+      action: 评估是否续展或更换方案

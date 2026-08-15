@@ -1,0 +1,36 @@
+# 法律知识库与合同问答路由规则
+
+questions:
+  "合同什么时候到期":
+    search: expire_date
+    source: contracts表
+
+  "付款方式":
+    search: payment_clause
+    source: clauses表 或 合同原文
+
+  "违约责任":
+    search: liability_clause
+    source: clauses表
+
+  "谁拥有知识产权":
+    search: ip_clause
+    source: clauses表
+
+  "管辖法院":
+    search: jurisdiction
+    source: 合同争议解决条款
+
+  "保密期限":
+    search: confidentiality_period
+    source: 保密条款
+
+  "能不能单方解除":
+    search: termination_clause
+    source: 解除条款
+
+# 通用回答原则
+principles:
+  - 优先从已入库合同与条款中检索
+  - 找不到时明确说「当前知识库无此合同记录」
+  - 涉及法律适用与后果时，提示仅供参考，重大事项咨询律师

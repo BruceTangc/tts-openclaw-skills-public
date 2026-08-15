@@ -1,0 +1,17 @@
+# 知识库索引（便于检索）
+
+legal_knowledge:
+  - file: legal-knowledge/company_law.md
+    topics: [公司治理, 股东会, 董事会, 法定代表人, 关联交易]
+  - file: legal-knowledge/contract_law.md
+    topics: [合同成立, 效力, 履行, 违约, 解除, 格式条款]
+  - file: legal-knowledge/labor_law.md
+    topics: [劳动合同, 试用期, 解除, 经济补偿, 竞业限制, 保密]
+  - file: legal-knowledge/ip_law.md
+    topics: [著作权, 专利, 商标, 职务成果, 许可]
+  - file: legal-knowledge/data_security.md
+    topics: [个人信息保护, 数据安全, 跨境传输, 委托处理]
+
+clause_library:
+  path: contract-writer/clause_library.yaml
+  topics: [付款, 验收, 知识产权, 责任限制, 保密, 解除, 反贿赂, 数据安全]

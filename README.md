@@ -19,6 +19,7 @@ OpenClaw 公共 skills 集合 — 通用、可复用的 Agent 能力库。
 | [pdf-extractor](pdf-extractor/) | PDF 文本提取，支持从官方文档自动更新 | PyMuPDF |
 | [self-improvement](self-improvement/) | 自主记忆与自我学习系统 V3.2（经验收集、知识图谱、多 Agent 学习、行为优化） | Python |
 | [tavily-web-search](tavily-web-search/) | Tavily API 集成：网页搜索、内容提取、用量查询（自动更新） | Node.js |
+| [caishen/company-legal](caishen/company-legal/) | 企业法务 AI（合同起草/审核/谈判/合规/法律问答） | YAML + SQL + Python |
 
 ## 🚀 快速使用
 
