@@ -1,5 +1,6 @@
 # 合同审核高风险规则库 v7.1
 # 用于自动识别问题条款并给出修改方向
+# 法条依据以《中华人民共和国民法典》为准（2021-01-01 施行，原《合同法》已废止）
 
 high_risk:
 
@@ -12,6 +13,7 @@ high_risk:
     dimension: 付款风险
     risk: 全额预付款风险极高
     suggestion: 调整为阶段付款（建议 30% 签约 + 40% 阶段验收 + 30% 终验）
+    legal_basis: 民法典第527条（不安抗辩权）——对方资信或履约能力恶化时可中止履行；全额预付使付款方丧失有效履约保障
     deduct_ratio: 1.0
 
   unlimited_liability:
@@ -23,6 +25,7 @@ high_risk:
     dimension: 违约责任
     risk: 无限责任风险
     suggestion: 增加责任上限（通常建议不超过合同总金额或已付金额的 100%-200%），并排除间接损失、利润损失
+    legal_basis: 民法典第584条（损失赔偿不得超过违约方订立合同时预见到或应当预见到的损失）；责任上限约定系意思自治，但显失公平可依第151条主张撤销
     deduct_ratio: 1.0
 
   ip_to_counterparty:
@@ -34,6 +37,7 @@ high_risk:
     dimension: 知识产权
     risk: 知识产权归属严重不利
     suggestion: 明确项目成果、代码、文档、数据的知识产权归属，通常应归委托方或双方共有并约定使用范围
+    legal_basis: 民法典第874条（委托开发完成的发明创造，除另有约定外，申请专利的权利属于研究开发人）；著作权法第19条（委托作品归属可约定）——必须以书面明确，否则默认对委托方不利
     deduct_ratio: 1.0
 
   unilateral_termination:
@@ -44,6 +48,7 @@ high_risk:
     dimension: 争议解决与其他
     risk: 单方任意解除权
     suggestion: 删除或严格限制单方解除条件，并明确解除后的结算与责任
+    legal_basis: 民法典第563条（法定解除须具备约定/法定情形）；第566条（解除后的结算清理）——任意解除权违反公平原则，可依第151条显失公平主张撤销
     deduct_ratio: 0.8
 
   no_acceptance_standard:
@@ -54,6 +59,7 @@ high_risk:
     dimension: 交付与验收
     risk: 验收标准缺失或完全主观
     suggestion: 增加可量化、可客观判断的验收标准与流程，明确不合格时的整改义务与期限
+    legal_basis: 民法典第510、511条（质量要求约定不明的，按强制性国家标准履行，没有的按推荐性标准/行业标准/通常标准）——主观验收条款易生争议，建议以附件固化标准
     deduct_ratio: 0.7
 
   data_outbound_risk:
@@ -64,6 +70,7 @@ high_risk:
     dimension: 保密与数据
     risk: 数据出境合规风险
     suggestion: 评估是否触发数据出境安全评估或标准合同要求，补充合规条款
+    legal_basis: 个人信息保护法第38-40条（个人信息出境三路径：安全评估/标准合同/认证，关键信息基础设施运营者原则上本地化存储）；数据安全法第31条（重要数据出境安全评估）
     deduct_ratio: 0.8
 
   jurisdiction_unfavorable:
@@ -74,6 +81,7 @@ high_risk:
     dimension: 争议解决与其他
     risk: 管辖对己方不利
     suggestion: 争取约定己方所在地法院或双方均可接受的仲裁机构
+    legal_basis: 民事诉讼法第35条（协议管辖须选择与争议有实际联系的地点，且不得违反级别管辖和专属管辖）；第34条（专属管辖）
     deduct_ratio: 0.5
 
 medium_risk:
@@ -86,6 +94,7 @@ medium_risk:
     dimension: 交付与验收
     risk: 服务范围或交付内容过于模糊
     suggestion: 尽量用附件明确工作范围、交付物清单与边界
+    legal_basis: 民法典第510条（合同内容约定不明可协议补充，不能达成补充协议的按合同相关条款或交易习惯确定）——约定模糊增加履约争议风险
     deduct_ratio: 0.4
 
   unequal_penalty:
@@ -95,6 +104,7 @@ medium_risk:
     dimension: 违约责任
     risk: 违约责任明显不对等
     suggestion: 调整为对等或合理比例的违约责任
+    legal_basis: 民法典第585条（违约金过分高于损失的，可请求适当减少）；第151条（显失公平的民事法律行为可请求撤销）——权利义务不对等条款可被认定显失公平
     deduct_ratio: 0.5
 
   short_confidentiality:
@@ -104,6 +114,7 @@ medium_risk:
     dimension: 保密与数据
     risk: 保密期限过短
     suggestion: 核心商业秘密建议保密期限 3-5 年或至公开为止
+    legal_basis: 反不正当竞争法第9条（商业秘密的保密义务）；保密期限过短可能使商业秘密丧失保密性而不受保护
     deduct_ratio: 0.4
 
   missing_anti_bribery:
@@ -113,5 +124,6 @@ medium_risk:
     dimension: 争议解决与其他
     risk: 缺少反商业贿赂条款（负面匹配时使用）
     suggestion: 建议补充反商业贿赂与合规声明条款
+    legal_basis: 反不正当竞争法第7条（禁止商业贿赂）；刑法第164条（对非国家工作人员行贿罪）——缺失廉洁条款存在合规与刑事风险敞口
     deduct_ratio: 0.3
-    # 注意：此条通常用于“未找到相关条款”时的检查逻辑
+    # 注意：此条通常用于"未找到相关条款"时的检查逻辑
