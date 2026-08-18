@@ -1,0 +1,19 @@
+{
+  "name": "balanced",
+  "version": 1,
+  "created": "2026-08-18T10:00:00",
+  "updated": "2026-08-18T10:00:00",
+  "status": "active",
+  "params": {
+    "hot_weight": 1.5,
+    "cold_weight": 1.0,
+    "trend_weight": 0.5,
+    "omission_bonus": 1.0
+  },
+  "performance": {
+    "top2_accuracy": 0.0,
+    "any_accuracy": 0.0,
+    "total_runs": 0,
+    "win_count": 0
+  }
+}
