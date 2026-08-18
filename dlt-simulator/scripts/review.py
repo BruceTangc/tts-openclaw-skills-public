@@ -41,12 +41,39 @@ def load_current_prediction(issue=None):
 
 
 def load_performance_history():
-    """加载策略表现历史"""
-    return load_json(STRATEGY_DIR / "performance_history.json") or []
+    """加载各策略版本表现历史（按策略+版本隔离）
+
+    返回 dict：{"strategies": {f"{name}_v{version}": {...}}}
+    """
+    data = load_json(STRATEGY_DIR / "performance_history.json")
+    if isinstance(data, dict) and "strategies" in data:
+        return data
+    # 兼容旧版 list 结构，迁移为按版本隔离
+    if isinstance(data, list):
+        migrated = {"strategies": {}}
+        for item in data:
+            key = f"{item.get('strategy', 'balanced')}_{item.get('version', 1)}"
+            migrated["strategies"][key] = {
+                "name": item.get("strategy", "balanced"),
+                "version": item.get("version", 1),
+                "total_runs": item.get("total_runs", 0),
+                "success": item.get("success", 0),
+                "fail": item.get("fail", 0),
+                "tie": item.get("tie", 0),
+                "win_count": item.get("win_count", 0),
+                "total_wins": item.get("total_wins", 0),
+                "best_tier": item.get("best_tier"),
+                "best_tier_name": item.get("best_tier_name", ""),
+                "first_run": item.get("first_run", ""),
+                "last_run": item.get("last_run", ""),
+            }
+        save_performance_history(migrated)
+        return migrated
+    return {"strategies": {}}
 
 
 def save_performance_history(history):
-    """保存策略表现历史"""
+    """保存各策略版本表现历史"""
     save_json(STRATEGY_DIR / "performance_history.json", history)
 
 
@@ -111,14 +138,14 @@ def review():
     date_str = datetime.now().strftime("%Y-%m-%d")
     filepath = REPORT_DIR / "reviews" / f"{date_str}_{draw_issue}.json"
 
-    # 计算 Top-2 Selection Accuracy：Top 2 是否包含本期 10 组中最佳表现组合
-    top2_acc = _calc_top2_accuracy(review_result, all_predictions)
-    review_result["top2_selection_success"] = top2_acc
-    review_result["top2_selection_accuracy"] = 1.0 if top2_acc else 0.0
+    # 计算 Top-2 Selection：SUCCESS / FAIL / TIE
+    top2 = _calc_top2_selection(review_result)
+    review_result["top2_selection"] = top2  # "SUCCESS" | "FAIL" | "TIE"
+    review_result["top2_selection_success"] = top2 == "SUCCESS"
 
     save_json(filepath, review_result)
 
-    # 8. 更新策略表现（含 Top-2 指标）
+    # 8. 更新策略表现（含 SUCCESS/FAIL/TIE + 隔离统计）
     _update_performance(review_result)
 
     # 9. 自动策略评估闭环（KEEP / ADJUST / REVERT → 更新 current_strategy.json）
@@ -128,28 +155,36 @@ def review():
     return review_result
 
 
-def _calc_top2_accuracy(review_result, all_predictions):
+def _calc_top2_selection(review_result):
     """
-    计算 Top-2 Selection Accuracy
+    计算 Top-2 Selection 三态结果
 
-    定义：模型 Top 2（BUY）是否包含本期 10 组候选中表现最佳的组合。
-    判定最佳：前区命中优先，后区命中次之，再比较奖级。
+    定义（沿用统一 performance_rank）：模型 Top 2（BUY）是否包含本期 10 组中最佳表现组合。
+
+    Returns:
+        str: "SUCCESS"（Top2 含唯一/并列最佳）| "FAIL"（Top2 无最佳）| "TIE"（10 组表现完全相同）
     """
-    if not review_result.get("results"):
-        return False
+    from prize_checker import performance_key
+    results = review_result.get("results")
+    if not results:
+        return "TIE"
     buy_count = review_result.get("buy_count", 2)
-    results = review_result["results"]
     if len(results) < buy_count:
-        return False
+        return "TIE"
 
-    # 找最佳表现组合（前区命中 → 后区命中 → 奖级）
-    def key(r):
-        return (r["front_hit"], r["back_hit"], r["tier"] is not None and -r["tier"] or 0)
-    best = max(results, key=key)
-    best_idx = results.index(best)
+    # 每组统一表现键（奖级优先 → 前区命中 → 后区命中）
+    keys = [performance_key(r["tier"], r["front_hit"], r["back_hit"]) for r in results]
 
-    # 最佳组合是否落在 Top 2（BUY）内
-    return best_idx < buy_count
+    # 若 10 组表现完全相同 → TIE（模型没有选错，本期无差异）
+    if len(set(keys)) == 1:
+        return "TIE"
+
+    # 最佳表现键
+    best_key = max(keys)
+    # Top 2（BUY）是否包含任一最佳组合
+    if any(keys[i] == best_key for i in range(buy_count)):
+        return "SUCCESS"
+    return "FAIL"
 
 
 def _run_strategy_loop(review_result):
@@ -166,20 +201,32 @@ def _run_strategy_loop(review_result):
         # 累计各策略表现（含 Top-2 指标）由 _update_performance 更新，这里评估当前策略
         history = load_performance_history()
         current_strategy_name = review_result.get("strategy", strategy.get("name", "balanced"))
-        perf = next((h for h in history if h.get("strategy") == current_strategy_name), {})
+        current_version = strategy.get("version", 1)
+        key = f"{current_strategy_name}_v{current_version}"
+        perf = history["strategies"].get(key, {})
 
+        s = perf.get("success", 0)
+        f = perf.get("fail", 0)
+        sel_acc = perf.get("selection_accuracy", 0)
         perf_data = {
             "total_runs": perf.get("total_runs", 0),
-            "win_rate": perf.get("win_rate", 0),
+            "win_rate": (perf.get("total_wins", 0) / perf.get("total_runs", 1)) * 100 if perf.get("total_runs", 0) > 0 else 0,
         }
         eval_result = evaluate_strategy(strategy, perf_data)
         action = eval_result.get("action", "KEEP")
 
         if action == "KEEP":
-            # 更新当前策略表现（Top-2 累计）
-            strategy.setdefault("performance", strategy.get("performance", {}))
-            strategy["performance"]["top2_accuracy"] = perf.get("top2_accuracy", strategy.get("performance", {}).get("top2_accuracy", 0))
-            strategy["performance"]["total_runs"] = perf.get("total_runs", strategy.get("performance", {}).get("total_runs", 0))
+            # 更新当前策略表现（含 Selection Accuracy 累计）
+            perf_out = {
+                "top2_accuracy": sel_acc,
+                "any_accuracy": 0.0,
+                "total_runs": perf.get("total_runs", 0),
+                "win_count": perf.get("win_count", 0),
+                "success": s,
+                "fail": f,
+                "tie": perf.get("tie", 0),
+            }
+            strategy["performance"] = perf_out
             save_current_strategy(strategy)
         elif action == "ADJUST":
             save_strategy_snapshot(strategy, reason="auto_adjust_before")
@@ -199,74 +246,90 @@ def _run_strategy_loop(review_result):
 
 
 def _update_performance(review_result):
-    """更新策略表现数据"""
+    """更新各策略版本表现数据（按策略+版本隔离，累计 SUCCESS/FAIL/TIE）"""
     strategy = review_result.get("strategy", "balanced")
+    # 策略版本：从 strategy_evaluation 或 current_strategy 读取当前版本
+    version = review_result.get("strategy_version", None) or _current_strategy_version(strategy)
+    key = f"{strategy}_v{version}"
+
     history = load_performance_history()
+    strategies = history["strategies"]
+    existing = strategies.get(key)
 
-    # 查找现有记录
-    existing = None
-    for h in history:
-        if h.get("strategy") == strategy:
-            existing = h
-            break
-
+    sel = review_result.get("top2_selection", "TIE")
     if existing:
         existing["total_runs"] = existing.get("total_runs", 0) + 1
-        existing["total_prize"] = existing.get("total_prize", 0) + review_result.get("total_prize", 0)
-        existing["total_bet"] = existing.get("total_bet", 0) + review_result.get("total_bet", 0)
+        existing["success"] = existing.get("success", 0) + (1 if sel == "SUCCESS" else 0)
+        existing["fail"] = existing.get("fail", 0) + (1 if sel == "FAIL" else 0)
+        existing["tie"] = existing.get("tie", 0) + (1 if sel == "TIE" else 0)
+        s = existing.get("success", 0)
+        f = existing.get("fail", 0)
+        existing["selection_accuracy"] = round(s / (s + f), 4) if (s + f) > 0 else 0.0
         existing["win_count"] = existing.get("win_count", 0) + review_result.get("win_count", 0)
         existing["total_wins"] = existing.get("total_wins", 0) + (1 if review_result.get("win_count", 0) > 0 else 0)
-        # Top-2 Selection Accuracy 累计（top2_selection_success 为 bool）
-        acc_count = existing.get("top2_acc_count", 0) + (1 if review_result.get("top2_selection_success") else 0)
-        existing["top2_acc_count"] = acc_count
-        existing["top2_accuracy"] = round(acc_count / existing["total_runs"], 4)
         existing["last_run"] = review_result.get("date", "")
-        # 最佳奖级
         best = review_result.get("best_tier")
         if best and (existing.get("best_tier") is None or best < existing["best_tier"]):
             existing["best_tier"] = best
             existing["best_tier_name"] = review_result.get("best_tier_name", "")
     else:
-        history.append({
-            "strategy": strategy,
+        strategies[key] = {
+            "name": strategy,
+            "version": version,
             "total_runs": 1,
-            "total_prize": review_result.get("total_prize", 0),
-            "total_bet": review_result.get("total_bet", 0),
+            "success": 1 if sel == "SUCCESS" else 0,
+            "fail": 1 if sel == "FAIL" else 0,
+            "tie": 1 if sel == "TIE" else 0,
+            "selection_accuracy": 1.0 if sel == "SUCCESS" else 0.0,
             "win_count": review_result.get("win_count", 0),
             "total_wins": 1 if review_result.get("win_count", 0) > 0 else 0,
-            "top2_acc_count": 1 if review_result.get("top2_selection_success") else 0,
-            "top2_accuracy": 1.0 if review_result.get("top2_selection_success") else 0.0,
             "best_tier": review_result.get("best_tier"),
             "best_tier_name": review_result.get("best_tier_name", ""),
-            "last_run": review_result.get("date", ""),
             "first_run": review_result.get("date", ""),
-        })
+            "last_run": review_result.get("date", ""),
+        }
 
     save_performance_history(history)
+    return key
+
+
+def _current_strategy_version(strategy_name):
+    """读取当前运行策略的版本号（用于隔离统计）"""
+    try:
+        from strategy_manager import load_current_strategy
+        st = load_current_strategy()
+        if st.get("name") == strategy_name:
+            return st.get("version", 1)
+    except Exception:
+        pass
+    return 1
 
 
 def get_strategy_performance():
-    """获取策略表现汇总"""
+    """获取各策略版本表现汇总（按版本隔离）"""
     history = load_performance_history()
     result = []
-    for h in history:
+    for key, h in history["strategies"].items():
         runs = h.get("total_runs", 0)
-        roi = 0.0
-        if h.get("total_bet", 0) > 0:
-            roi = h.get("total_prize", 0) / h["total_bet"] * 100
-        win_rate = h.get("win_count", 0) / runs * 100 if runs > 0 else 0
+        s = h.get("success", 0)
+        f = h.get("fail", 0)
+        sel_acc = h.get("selection_accuracy", 0)
+        win_rate = h.get("total_wins", 0) / runs * 100 if runs > 0 else 0
         result.append({
-            "strategy": h["strategy"],
+            "strategy": h.get("name", key),
+            "version": h.get("version", 1),
             "total_runs": runs,
+            "success": s,
+            "fail": f,
+            "tie": h.get("tie", 0),
+            "selection_accuracy": round(sel_acc * 100, 2) if sel_acc else 0.0,
             "win_rate": round(win_rate, 2),
-            "total_prize": h.get("total_prize", 0),
-            "total_bet": h.get("total_bet", 0),
-            "roi": 0,  # 不计算 ROI
             "best_tier": h.get("best_tier"),
             "best_tier_name": h.get("best_tier_name", ""),
+            "first_run": h.get("first_run", ""),
             "last_run": h.get("last_run", ""),
         })
-    result.sort(key=lambda x: x["win_rate"], reverse=True)
+    result.sort(key=lambda x: x["selection_accuracy"], reverse=True)
     return result
 
 
@@ -307,12 +370,20 @@ def format_review(review_result):
     lines.append(f"总奖金: ¥{review_result.get('total_prize', 0):,}")
     lines.append(f"中奖注数: {review_result.get('win_count', 0)}/{len(review_result.get('results', []))}")
     lines.append(f"投注成本: ¥{review_result.get('total_bet', 0):,}")
-    if review_result.get('total_bet', 0) > 0:
-        roi = review_result.get('total_prize', 0) / review_result['total_bet'] * 100
-        lines.append(f"回报率: {roi:.2f}%")
 
     if review_result.get("best_tier"):
         lines.append(f"最佳: {review_result['best_tier_name']}")
+
+    # Top-2 Selection 三态
+    sel = review_result.get("top2_selection")
+    if sel:
+        lines.append(f"Top-2 Selection: {sel}")
+
+    # 策略自动评估
+    se = review_result.get("strategy_evaluation")
+    if se:
+        action = se.get("action", "?")
+        lines.append(f"策略评估: {action} | {se.get('reason', '')}")
 
     return "\n".join(lines)
 
@@ -332,9 +403,9 @@ if __name__ == "__main__":
             print("📊 策略表现汇总")
             print("=" * 50)
             for p in perf:
-                print(f"  {p['strategy']:12s} | 运行 {p['total_runs']:3d} 次 | "
-                      f"中奖率 {p['win_rate']:5.1f}% | "
-                      f"ROI {p['roi']:+.1f}% | "
+                print(f"  {p['strategy']} v{p['version']:2d} | 运行 {p['total_runs']:3d} 次 | "
+                      f"S/F/T  {p['success']}/{p['fail']}/{p['tie']} | "
+                      f"Sel-Acc {p['selection_accuracy']:5.1f}% | "
                       f"最佳: {p['best_tier_name']}")
     else:
         result = review()

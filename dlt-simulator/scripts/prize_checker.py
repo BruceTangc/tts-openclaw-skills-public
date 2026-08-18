@@ -38,6 +38,29 @@ TIER_NAMES = {
     7: "七等奖",
 }
 
+# 统一组合表现等级（用于 Top-2 Selection 等跨模块排序）
+# 一等奖=7 ... 七等奖=1，未中奖=0
+TIER_RANK = {
+    1: 7,
+    2: 6,
+    3: 5,
+    4: 4,
+    5: 3,
+    6: 2,
+    7: 1,
+}
+
+
+def performance_key(tier, front_hit, back_hit):
+    """
+    统一的组合表现排序键：奖级优先，其次前区命中，再后区命中
+
+    Returns:
+        tuple: (prize_rank, front_hit, back_hit)
+    """
+    prize_rank = TIER_RANK.get(tier, 0)  # 未中奖 = 0
+    return (prize_rank, front_hit, back_hit)
+
 # 固定奖奖金（元）：tier → (pool<8亿, pool>=8亿)
 FIXED_PRIZES = {
     3: (5000, 6666),
