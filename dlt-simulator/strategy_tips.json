@@ -1,0 +1,6 @@
+{
+  "strategy": "balanced",
+  "zone_hint": "2,2,1",
+  "advice": "下期均衡分布",
+  "next_draw": "26094"
+}

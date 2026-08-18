@@ -1,8 +1,8 @@
 ---
 name: dlt-simulator
 display_name: 超级大乐透模拟器
-title: 超级大乐透开奖模拟与奖金计算
-description: 模拟超级大乐透开奖、号码匹配、奖金计算。支持单注/复式/多期模拟，基于2026年新规（7个奖级）。
+title: 超级大乐透概率统计模拟器
+description: 基于历史数据的概率统计模拟，生成10组候选（Top 2 BUY + 8 WATCH），开奖后全量复盘与策略验证。基于2026年新规（7个奖级）。
 version: 3.0.0
 author: OpenClaw
 ---
@@ -11,6 +11,8 @@ author: OpenClaw
 
 > ⚠️ **铁律**：SKILL 已封装全部逻辑，agent 只需执行下面列出的命令，零代码、零脚本、零临时文件。
 > 禁止 `python3 -c`、禁止 heredoc、禁止写临时 .py、禁止手拼 JSON。
+>
+> 本 Skill 使用官方中奖规则仅用于判断每组模拟号码的中奖等级，不进行奖金金额预测、理论奖金计算、ROI 或收益模拟。
 
 ## 架构概览
 
@@ -167,7 +169,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 predicti
 
 ## 开奖对比流程（cron 专项，命令驱动版）
 
-开奖对比 cron（周一/三/六 22:00）。**全程只执行下面列出的命令，零代码。**
+开奖对比 cron（周一/三/六 21:30）。**全程只执行下面列出的命令，零代码。**
 
 **第1步：复盘（一条命令完成：拉最新+匹配+更新策略表现）**
 ```bash

@@ -159,12 +159,12 @@ def get_strategy_performance():
             "win_rate": round(win_rate, 2),
             "total_prize": h.get("total_prize", 0),
             "total_bet": h.get("total_bet", 0),
-            "roi": round(roi, 2),
+            "roi": 0,  # 不计算 ROI
             "best_tier": h.get("best_tier"),
             "best_tier_name": h.get("best_tier_name", ""),
             "last_run": h.get("last_run", ""),
         })
-    result.sort(key=lambda x: x["roi"], reverse=True)
+    result.sort(key=lambda x: x["win_rate"], reverse=True)
     return result
 
 
