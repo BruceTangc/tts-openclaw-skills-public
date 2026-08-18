@@ -12,7 +12,7 @@ from pathlib import Path
 
 from common import (
     load_config, load_json, save_json,
-    DATA_DIR, REPORT_DIR, STRATEGY_DIR,
+    DATA_DIR, STRATEGY_DIR,
     format_combination
 )
 from fetch_history import fetch_history
@@ -155,17 +155,33 @@ def _stats_summary(stats):
     return summary
 
 
+PREDICTIONS_DIR = DATA_DIR / "predictions"
+
+
 def save_prediction(prediction):
-    """保存预测结果"""
-    # 保存到 predictions 目录
-    date_str = prediction.get("date", datetime.now().strftime("%Y-%m-%d"))
+    """
+    保存预测结果（按期号永久冻结，不可覆盖）
+
+    保存位置：data/predictions/{issue}.json
+    同一期号重复生成不会覆盖已有快照，保证 21:30 对比的是 18:00 冻结的 10 组。
+
+    Returns:
+        Path: 保存的文件路径
+    """
+    PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
     issue = prediction.get("issue", "unknown")
-    filepath = REPORT_DIR / "predictions" / f"{date_str}_{issue}.json"
+    filepath = PREDICTIONS_DIR / f"{issue}.json"
+
+    # 若该期号已有冻结快照，不覆盖（避免 18:00 任务重复执行时破坏不可变性）
+    if filepath.exists():
+        existing = load_json(filepath)
+        if existing and existing.get("issue") == issue:
+            return filepath
+
     save_json(filepath, prediction)
 
-    # 保存到当前预测文件（供 review 使用）
-    current_file = DATA_DIR / "current_prediction.json"
-    save_json(current_file, prediction)
+    # 顺带记录最新预测指针（仅用于快速定位，不作为唯一数据源）
+    save_json(DATA_DIR / "latest_prediction_issue.json", {"issue": issue})
 
     return filepath
 

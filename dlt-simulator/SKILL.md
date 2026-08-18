@@ -1,13 +1,13 @@
 ---
 name: dlt-simulator
-display_name: 超级大乐透模拟器
-title: 超级大乐透概率统计模拟器
-description: 基于历史数据的概率统计模拟，生成10组候选（Top 2 BUY + 8 WATCH），开奖后全量复盘与策略验证。基于2026年新规（7个奖级）。
-version: 3.0.0
+display_name: 超级大乐透概率统计模拟器
+title: 超级大乐透概率统计模拟与策略实验
+description: 基于历史开奖数据进行概率统计分析，生成10组模拟候选，选取Top 2作为BUY、其余8组作为WATCH，并在开奖后进行全量复盘、奖级判定和策略迭代。
+version: 1.0.0
 author: OpenClaw
 ---
 
-# 超级大乐透模拟器 v3
+# 超级大乐透概率统计模拟器 v1.0
 
 > ⚠️ **铁律**：SKILL 已封装全部逻辑，agent 只需执行下面列出的命令，零代码、零脚本、零临时文件。
 > 禁止 `python3 -c`、禁止 heredoc、禁止写临时 .py、禁止手拼 JSON。
@@ -209,6 +209,6 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 
 ## 核心指标
 
-- **Top-2 Selection Accuracy**：Top 2 候选（BUY）的命中率
+- **Top-2 Selection Accuracy**：模型Top 2是否包含本期10组候选中最佳表现组合（注意：不是命中率，是选优能力）
 - **Walk-forward 回测**：禁止未来数据泄露
 - **Bootstrap 置信区间**：95% CI 评估策略稳定性

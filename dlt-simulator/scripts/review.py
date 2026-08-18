@@ -19,8 +19,24 @@ from prize_checker import check_batch, TIER_NAMES
 cfg = load_config()
 
 
-def load_current_prediction():
-    """加载当前预测"""
+def load_current_prediction(issue=None):
+    """加载预测（默认按期号读取冻结快照）
+
+    Args:
+        issue: 期号；None 则读取最近未复盘的一期冻结快照
+    """
+    predictions_dir = DATA_DIR / "predictions"
+    if predictions_dir.exists():
+        if issue:
+            path = predictions_dir / f"{issue}.json"
+            return load_json(path)
+        # 无期号：按文件名降序取最新
+        files = sorted(predictions_dir.glob("*.json"), reverse=True)
+        for f in files:
+            pred = load_json(f)
+            if pred:
+                return pred
+    # 回退：旧版 current_prediction.json（兼容）
     return load_json(DATA_DIR / "current_prediction.json")
 
 
@@ -94,12 +110,92 @@ def review():
     # 7. 保存复盘结果
     date_str = datetime.now().strftime("%Y-%m-%d")
     filepath = REPORT_DIR / "reviews" / f"{date_str}_{draw_issue}.json"
+
+    # 计算 Top-2 Selection Accuracy：Top 2 是否包含本期 10 组中最佳表现组合
+    top2_acc = _calc_top2_accuracy(review_result, all_predictions)
+    review_result["top2_selection_success"] = top2_acc
+    review_result["top2_selection_accuracy"] = 1.0 if top2_acc else 0.0
+
     save_json(filepath, review_result)
 
-    # 8. 更新策略表现
+    # 8. 更新策略表现（含 Top-2 指标）
     _update_performance(review_result)
 
+    # 9. 自动策略评估闭环（KEEP / ADJUST / REVERT → 更新 current_strategy.json）
+    strategy_result = _run_strategy_loop(review_result)
+    review_result["strategy_evaluation"] = strategy_result
+
     return review_result
+
+
+def _calc_top2_accuracy(review_result, all_predictions):
+    """
+    计算 Top-2 Selection Accuracy
+
+    定义：模型 Top 2（BUY）是否包含本期 10 组候选中表现最佳的组合。
+    判定最佳：前区命中优先，后区命中次之，再比较奖级。
+    """
+    if not review_result.get("results"):
+        return False
+    buy_count = review_result.get("buy_count", 2)
+    results = review_result["results"]
+    if len(results) < buy_count:
+        return False
+
+    # 找最佳表现组合（前区命中 → 后区命中 → 奖级）
+    def key(r):
+        return (r["front_hit"], r["back_hit"], r["tier"] is not None and -r["tier"] or 0)
+    best = max(results, key=key)
+    best_idx = results.index(best)
+
+    # 最佳组合是否落在 Top 2（BUY）内
+    return best_idx < buy_count
+
+
+def _run_strategy_loop(review_result):
+    """
+    自动策略闭环：根据复盘表现评估策略，KEEP/ADJUST/REVERT 并更新 current_strategy.json
+    """
+    try:
+        from strategy_manager import (
+            load_current_strategy, save_current_strategy,
+            save_strategy_snapshot, evaluate_strategy, adjust_strategy
+        )
+        strategy = load_current_strategy()
+
+        # 累计各策略表现（含 Top-2 指标）由 _update_performance 更新，这里评估当前策略
+        history = load_performance_history()
+        current_strategy_name = review_result.get("strategy", strategy.get("name", "balanced"))
+        perf = next((h for h in history if h.get("strategy") == current_strategy_name), {})
+
+        perf_data = {
+            "total_runs": perf.get("total_runs", 0),
+            "win_rate": perf.get("win_rate", 0),
+        }
+        eval_result = evaluate_strategy(strategy, perf_data)
+        action = eval_result.get("action", "KEEP")
+
+        if action == "KEEP":
+            # 更新当前策略表现（Top-2 累计）
+            strategy.setdefault("performance", strategy.get("performance", {}))
+            strategy["performance"]["top2_accuracy"] = perf.get("top2_accuracy", strategy.get("performance", {}).get("top2_accuracy", 0))
+            strategy["performance"]["total_runs"] = perf.get("total_runs", strategy.get("performance", {}).get("total_runs", 0))
+            save_current_strategy(strategy)
+        elif action == "ADJUST":
+            save_strategy_snapshot(strategy, reason="auto_adjust_before")
+            new_strategy = adjust_strategy(strategy, "auto")
+            save_current_strategy(new_strategy)
+            eval_result["new_version"] = new_strategy.get("version")
+        elif action == "REVERT":
+            save_strategy_snapshot(strategy, reason="auto_revert_before")
+            from strategy_manager import revert_strategy
+            reverted = revert_strategy()
+            save_current_strategy(reverted)
+            eval_result["new_version"] = reverted.get("version")
+
+        return eval_result
+    except Exception as e:
+        return {"action": "ERROR", "reason": str(e)}
 
 
 def _update_performance(review_result):
@@ -120,6 +216,10 @@ def _update_performance(review_result):
         existing["total_bet"] = existing.get("total_bet", 0) + review_result.get("total_bet", 0)
         existing["win_count"] = existing.get("win_count", 0) + review_result.get("win_count", 0)
         existing["total_wins"] = existing.get("total_wins", 0) + (1 if review_result.get("win_count", 0) > 0 else 0)
+        # Top-2 Selection Accuracy 累计（top2_selection_success 为 bool）
+        acc_count = existing.get("top2_acc_count", 0) + (1 if review_result.get("top2_selection_success") else 0)
+        existing["top2_acc_count"] = acc_count
+        existing["top2_accuracy"] = round(acc_count / existing["total_runs"], 4)
         existing["last_run"] = review_result.get("date", "")
         # 最佳奖级
         best = review_result.get("best_tier")
@@ -134,6 +234,8 @@ def _update_performance(review_result):
             "total_bet": review_result.get("total_bet", 0),
             "win_count": review_result.get("win_count", 0),
             "total_wins": 1 if review_result.get("win_count", 0) > 0 else 0,
+            "top2_acc_count": 1 if review_result.get("top2_selection_success") else 0,
+            "top2_accuracy": 1.0 if review_result.get("top2_selection_success") else 0.0,
             "best_tier": review_result.get("best_tier"),
             "best_tier_name": review_result.get("best_tier_name", ""),
             "last_run": review_result.get("date", ""),
