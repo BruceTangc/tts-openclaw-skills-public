@@ -146,11 +146,18 @@ def review():
     save_json(filepath, review_result)
 
     # 8. 更新策略表现（含 SUCCESS/FAIL/TIE + 隔离统计）
-    _update_performance(review_result)
+    # 无效复盘（空结果）不进入策略统计
+    if top2 != "REVIEW_INVALID":
+        _update_performance(review_result)
 
-    # 9. 自动策略评估闭环（KEEP / ADJUST / REVERT → 更新 current_strategy.json）
-    strategy_result = _run_strategy_loop(review_result)
-    review_result["strategy_evaluation"] = strategy_result
+        # 9. 自动策略评估闭环（KEEP / ADJUST / REVERT → 更新 current_strategy.json）
+        strategy_result = _run_strategy_loop(review_result)
+        review_result["strategy_evaluation"] = strategy_result
+    else:
+        review_result["strategy_evaluation"] = {
+            "action": "SKIP",
+            "reason": "复盘结果为空，判定本次无效，不进入策略统计",
+        }
 
     return review_result
 
@@ -166,11 +173,11 @@ def _calc_top2_selection(review_result):
     """
     from prize_checker import performance_key
     results = review_result.get("results")
-    if not results:
-        return "TIE"
     buy_count = review_result.get("buy_count", 2)
-    if len(results) < buy_count:
-        return "TIE"
+
+    # 空结果 / 结果数不足 → 无效复盘，不进入 TIE/SUCCESS/FAIL 判定（避免污染实验数据）
+    if not results or len(results) < buy_count:
+        return "REVIEW_INVALID"
 
     # 每组统一表现键（奖级优先 → 前区命中 → 后区命中）
     keys = [performance_key(r["tier"], r["front_hit"], r["back_hit"]) for r in results]

@@ -62,7 +62,7 @@ def performance_key(tier, front_hit, back_hit):
     return (prize_rank, front_hit, back_hit)
 
 # 固定奖奖金（元）：tier → (pool<8亿, pool>=8亿)
-FIXED_PRIZES = {
+PRIZE_RULES = {
     3: (5000, 6666),
     4: (300, 380),
     5: (150, 200),
@@ -118,7 +118,7 @@ def calc_prize(tier, pool_billion=None, add_bet=False):
         return base
     # 固定奖
     use_over = pool_billion is not None and pool_billion >= 8
-    return FIXED_PRIZES[tier][1 if use_over else 0]
+    return PRIZE_RULES[tier][1 if use_over else 0]
 
 
 def check_prize(user_front, user_back, draw_front, draw_back, pool_billion=None, add_bet=False):
