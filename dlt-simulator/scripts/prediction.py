@@ -34,10 +34,25 @@ WATCH_COUNT = cfg["watch_count"]
 _YEAR_END_ISSUE = {
     7: 93, 8: 154, 9: 153, 10: 153, 11: 154, 12: 154, 13: 153, 14: 154,
     15: 153, 16: 154, 17: 153, 18: 154, 19: 150, 20: 134, 21: 150, 22: 150,
-    23: 150, 24: 152, 25: 150, 26: 94,
-}
+    23: 150, 24: 152, 25: 150,}
 # 未观测年份的保守末期号参考值（未来年份，跨年点未知，用 150 兜底）
 _DEFAULT_YEAR_END = 150
+
+
+def _at_year_end(date_str):
+    """判断开奖日期是否处于年末（12月）。
+
+    用于防止把「进行中年份、期号偏大」误判成跨年：大乐透一年约 150 期，
+    跨年仅末年末发生；若开奖日期明确非 12 月，即使期号较大也不跨年。
+    无日期信息时不强制（保守：只按期号判断）。
+    """
+    d = str(date_str or "").strip()
+    if len(d) >= 7:
+        try:
+            return int(d[5:7]) == 12
+        except (ValueError, IndexError):
+            pass
+    return True
 
 
 def compute_next_issue(latest_issue, latest_date=""):
@@ -60,10 +75,11 @@ def compute_next_issue(latest_issue, latest_date=""):
     if len(s) == 5 and s.isdigit():
         year = int(s[:2])
         num = int(s[2:])
-        # 该年实际末期号（历史已知年份）或默认 150（未观测年份）
+        # 该年末期号：已结束年份真实值；进行中/未来用默认 150
         year_end = _YEAR_END_ISSUE.get(year, _DEFAULT_YEAR_END)
-        # 处于该年末期 → 跨年（年份 +1 取两位、期号归 001）
-        if num >= year_end:
+        # 跨年条件：期号已达年末且处于年末（12月）。进行中年份(如现在 2026 年中才94期)
+        # 不会被提前判成跨年(26094是2026第94期, 非年末, 应为26095)。
+        if num >= year_end and _at_year_end(latest_date):
             return "%02d001" % ((year + 1) % 100)
         return "%02d%03d" % (year, num + 1)
 

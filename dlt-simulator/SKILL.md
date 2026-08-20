@@ -211,7 +211,8 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 
 - **Top-2 Selection Accuracy**：模型Top 2是否包含本期10组候选中最佳表现组合（注意：不是命中率，是选优能力）
 - **Walk-forward 回测**：禁止未来数据泄露
-- **Bootstrap 置信区间**：95% CI 评估策略稳定性
+- **Walk-forward Monte Carlo / Bootstrap-style Stability Analysis**：多次随机取训练窗口的重采样稳定性分析
+  （注意：这是随机时间窗口的稳定度实验，不是严格统计学 bootstrap 抽样推断）
 
 ---
 
