@@ -274,17 +274,16 @@ def score_candidate(front, back, draws, window=None):
         scores["zone"] = 0.2
     scores["zone"] = round(scores["zone"], 4)
 
-    # 6. 奖级概率得分（Monte Carlo近似）
-    scores["prize_prob"] = 0.0  # 简化，后续可接入MC
+    # 6. 奖级概率得分已移除：大乐透为独立随机开奖，无可靠概率预测，
+    #    避免“伪评分”误导。权重在下方 5 项归一化为 100%。
 
-    # 加权总分
+    # 加权总分（5 项归一化）
     weights = {
-        "frequency": 0.25,
-        "omission": 0.20,
-        "sum": 0.15,
-        "odd_even": 0.15,
-        "zone": 0.15,
-        "prize_prob": 0.10,
+        "frequency": 0.278,
+        "omission": 0.222,
+        "sum": 0.167,
+        "odd_even": 0.167,
+        "zone": 0.167,
     }
     total_score = sum(scores[k] * weights[k] for k in weights)
     scores["total"] = round(total_score, 4)

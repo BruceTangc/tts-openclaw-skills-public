@@ -27,6 +27,73 @@ PREDICTION_COUNT = cfg["prediction_count"]
 BUY_COUNT = cfg["buy_count"]
 WATCH_COUNT = cfg["watch_count"]
 
+# 大乐透年度末期号（据真实历史 2007-26094 统计）：每年实际期数不同，
+# 跨年 = 当年期号达到该年“年末最后一期”的真实期号后，下一期跳到次年 001。
+# 例：071503* 年不同 — 07年93期即终（07093→08001），08年154期（08154→09001）。
+# 内嵌已观测年份的真实末期号；未观测年份（未来）按年份递增年份+1 期号归001。
+_YEAR_END_ISSUE = {
+    7: 93, 8: 154, 9: 153, 10: 153, 11: 154, 12: 154, 13: 153, 14: 154,
+    15: 153, 16: 154, 17: 153, 18: 154, 19: 150, 20: 134, 21: 150, 22: 150,
+    23: 150, 24: 152, 25: 150, 26: 94,
+}
+# 未观测年份的保守末期号参考值（未来年份，跨年点未知，用 150 兜底）
+_DEFAULT_YEAR_END = 150
+
+
+def compute_next_issue(latest_issue, latest_date=""):
+    """计算下一期期号（年度期号 YYNNN，跨年由真实年度末期号决定，不简单 +1）。
+
+    大乐透期号 5 位：YYNNN（年份后两位 + 当年期序号）。跨年规律（据真实数据）：
+    当年期号达到该年实际末期号（07年93、08年154、24年152…）时，下一期进位到
+    次年 001 —— 如 07093→08001、08154→09001、25150→26001。
+
+    Args:
+        latest_issue: 最新一期期号（标准 5 位 YYNNN）
+        latest_date: 最新开奖日期（YYYY-MM-DD，可选，年份兜底）
+
+    Returns:
+        str: 下一期期号；无法解析返回 ""。
+    """
+    s = str(latest_issue or "").strip()
+
+    # 标准 5 位年度期号
+    if len(s) == 5 and s.isdigit():
+        year = int(s[:2])
+        num = int(s[2:])
+        # 该年实际末期号（历史已知年份）或默认 150（未观测年份）
+        year_end = _YEAR_END_ISSUE.get(year, _DEFAULT_YEAR_END)
+        # 处于该年末期 → 跨年（年份 +1 取两位、期号归 001）
+        if num >= year_end:
+            return "%02d001" % ((year + 1) % 100)
+        return "%02d%03d" % (year, num + 1)
+
+    # 兜底一：日期提供年份，生成当年期号
+    if latest_date:
+        d = str(latest_date).strip()
+        try:
+            from datetime import datetime as _dt
+            y = _dt.strptime(d[:10], "%Y-%m-%d").year % 100
+            return _try_numeric_next(s, y)
+        except Exception:
+            pass
+
+    # 兜底二：简单数值 +1
+    if s.isdigit():
+        return str(int(s) + 1)
+    return ""
+
+
+def _try_numeric_next(issue_str, year):
+    """尝试把非 5 位期号按数值 +1，返回年度期号格式；失败则回退。"""
+    try:
+        num = int(issue_str)
+        # 若当前值像“当年期号”（< _YEARLY_MAX_NUM），则包装成年度期号
+        if num < _YEARLY_MAX_NUM:
+            return "%02d%03d" % (year, num + 1)
+        return str(num + 1)
+    except (ValueError, TypeError):
+        return ""
+
 
 def generate_prediction(strategy_name=None, prediction_count=None):
     """
@@ -100,9 +167,10 @@ def generate_prediction(strategy_name=None, prediction_count=None):
     buy = filtered[:BUY_COUNT]
     watch = filtered[BUY_COUNT:prediction_count]
 
-    # 8. 获取最新期号
+    # 8. 获取最新期号（跨年安全：年度期号 YYNNN 体系，不简单 +1）
     latest_issue = draws[0].get("issue", "") if draws else ""
-    next_issue = str(int(latest_issue) + 1) if latest_issue.isdigit() else ""
+    latest_date = draws[0].get("date", "") if draws else ""
+    next_issue = compute_next_issue(latest_issue, latest_date)
 
     # 9. 组装结果
     result = {

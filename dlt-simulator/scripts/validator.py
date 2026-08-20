@@ -27,6 +27,26 @@ def load_history_combos():
     return combos
 
 
+def build_history_combos(draws):
+    """从给定的开奖数据子集构建历史组合集合（不读全量数据库）。
+
+    用于 Walk-forward 回测时限定“只使用训练窗口之前/之内的数据”建立历史过滤集，
+    避免未来数据泄露 —— 即不用整个 history_draws.json（它会包含测试点之后的数据）。
+
+    Args:
+        draws: 用于建立历史的开奖记录 [{"front":[...], "back":[...]}, ...]
+
+    Returns:
+        set[tuple]: 历史组合集合
+    """
+    combos = set()
+    for d in draws or []:
+        front = tuple(sorted(d["front"]))
+        back = tuple(sorted(d["back"]))
+        combos.add((front, back))
+    return combos
+
+
 def is_historical(front, back, history_combos=None):
     """
     检查组合是否与历史完整中奖组合完全一致

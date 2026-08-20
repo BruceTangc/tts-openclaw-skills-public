@@ -2,7 +2,7 @@
   "name": "balanced",
   "version": 1,
   "created": "2026-08-18T10:00:00",
-  "updated": "2026-08-18T13:33:13.867707",
+  "updated": "2026-08-19T22:00:19.127149",
   "status": "active",
   "params": {
     "hot_weight": 1.5,
@@ -13,11 +13,10 @@
   "performance": {
     "top2_accuracy": 0.0,
     "any_accuracy": 0.0,
-    "total_runs": 0,
+    "total_runs": 1,
     "win_count": 0,
     "success": 0,
-    "fail": 0,
-    "tie": 0,
-    "selection_accuracy": 0.0
+    "fail": 1,
+    "tie": 0
   }
 }

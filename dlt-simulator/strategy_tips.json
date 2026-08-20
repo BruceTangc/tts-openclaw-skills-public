@@ -1,6 +1,48 @@
 {
-  "strategy": "balanced",
-  "zone_hint": "2,2,1",
-  "advice": "下期均衡分布",
+  "last_draw": {
+    "issue": "26093",
+    "front": [
+      10,
+      11,
+      18,
+      22,
+      35
+    ],
+    "back": [
+      6,
+      12
+    ],
+    "features": {
+      "odd_even": "2奇3偶",
+      "zone_dist": "2,2,1",
+      "front_sum": 96,
+      "back_sum": 18
+    }
+  },
+  "analysis": {
+    "hit_rate": "10/10注未中奖（最高1前区命中）",
+    "key_miss": "后区全部开在1/3，实际开6/12",
+    "pattern": "本期后区走大，前区和值偏高(96)，高区仅35但低区密集",
+    "lessons": [
+      "后区需增加6-12区间覆盖",
+      "前区避免过度集中在低区",
+      "和值偏高时注意高区号码"
+    ]
+  },
+  "next_draw_recommendations": {
+    "strategy": "balanced",
+    "zone_hint": "2,2,1",
+    "back_pool": [
+      4,
+      6,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "front_pool": "从统计热号+遗漏号中选取，注意高区覆盖",
+    "advice": "下期关注后区6-12区间，前区和值控制在80-100，奇偶比3:2或2:3"
+  },
   "next_draw": "26094"
 }

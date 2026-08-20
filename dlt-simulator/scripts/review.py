@@ -94,9 +94,21 @@ def review():
     if not latest:
         return {"error": "无法获取最新开奖数据"}
 
-    # 3. 检查预测是否针对本期
+    # 3. 检查预测是否针对本期（硬性条件，防期号错配污染数据）
     pred_issue = prediction.get("issue", "")
     draw_issue = latest.get("issue", "")
+
+    # 数据完整性：预测期号必须与最新开奖期号一致，否则禁止复盘（REVIEW_PENDING），
+    # 不对比、不更新策略、不写 win_count/performance —— 防止“拿上期开奖对比本期预测”污染实验数据。
+    if pred_issue and draw_issue and str(pred_issue).strip() != str(draw_issue).strip():
+        return {
+            "error": "期号不匹配，跳过复盘（REVIEW_PENDING）",
+            "prediction_issue": pred_issue,
+            "draw_issue": draw_issue,
+            "status": "REVIEW_PENDING",
+            "reason": "预测期号(%s) != 最新开奖期号(%s)，可能因数据源延迟/抓取异常/时机问题"
+                       % (pred_issue, draw_issue),
+        }
 
     # 4. 合并BUY和WATCH进行检查
     all_predictions = prediction.get("buy", []) + prediction.get("watch", [])

@@ -14,7 +14,7 @@ from common import load_config, save_json, DATA_DIR, REPORT_DIR
 from fetch_history import fetch_history
 from generator import generate_top_candidates, compute_weights, weighted_sample
 from diversify import full_diversify
-from validator import filter_historical, load_history_combos
+from validator import filter_historical, load_history_combos, build_history_combos
 from prize_checker import determine_tier
 
 cfg = load_config()
@@ -60,8 +60,10 @@ def walk_forward_backtest(draws, strategy="balanced", train_window=200, test_cou
         # 生成候选（基于训练数据）
         candidates = generate_top_candidates(train_draws, strategy, top_n)
         diversified = full_diversify(candidates, top_n)
-        history_combos = load_history_combos()
-        filtered, _ = filter_historical(diversified, history_combos)
+        # 历史过滤只用“训练窗口内的数据”建立集合，禁止未来数据泄露：
+        # 不能用 load_history_combos()（它读整个 history_draws.json，含测试点之后）。
+        train_history_combos = build_history_combos(train_draws)
+        filtered, _ = filter_historical(diversified, train_history_combos)
 
         if len(filtered) < top_n:
             filtered = diversified[:top_n]
@@ -143,7 +145,7 @@ def bootstrap_analysis(draws, strategy="balanced", iterations=None,
     any_accuracies = []
     tier_counts = Counter()
 
-    for _ in iterations:
+    for _ in range(iterations):
         # 随机选择起始点（Walk-forward：从随机位置开始，只用历史数据）
         start = random.randint(0, max_start)
         train_draws = draws[start: start + train_window]
@@ -152,8 +154,9 @@ def bootstrap_analysis(draws, strategy="balanced", iterations=None,
         # 生成候选
         candidates = generate_top_candidates(train_draws, strategy, top_n, cfg["candidate_pool_size"])
         diversified = full_diversify(candidates, top_n)
-        history_combos = load_history_combos()
-        filtered, _ = filter_historical(diversified, history_combos)
+        # 历史过滤只用本窗口内的数据，防止未来数据泄露（不用全量 load_history_combos）
+        train_history_combos = build_history_combos(train_draws)
+        filtered, _ = filter_historical(diversified, train_history_combos)
         if len(filtered) < top_n:
             filtered = diversified[:top_n]
 

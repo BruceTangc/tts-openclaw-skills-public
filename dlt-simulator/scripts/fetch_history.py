@@ -25,11 +25,118 @@ HEADERS = {
     "Referer": "https://www.lottery.gov.cn/",
 }
 
-# 备用数据源
+# 体彩官方历史数据 JSON API（实测可用：gameNo=85 超级大乐透，分页拉全量）
+OFFICIAL_GAME_NO = "85"
+OFFICIAL_URL = (
+    "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry"
+    "?gameNo={game}&provinceId=0&pageSize={pageSize}&isVerify=1&pageNo={pageNo}"
+)
+OFFICIAL_PAGE_SIZE = 100
+
+# 后备源（js-lottery 干净但只 10 期；500.com 解析易脏；体彩 html 壳不可用）
 BACKUP_URLS = [
-    "https://datachart.500.com/dlt/history/newinc/history.php?limit={limit}&sort=0",
-    "https://www.js-lottery.com/wfzq/dlt/data",
+    "https://www.js-lottery.com/wfzq/dlt/data",            # 干净但仅最近 10 期
+    "https://datachart.500.com/dlt/history/newinc/history.php?limit={limit}&sort=0",  # 解析易脏，后备
 ]
+
+# 大乐透规则（用于数据合法性校验）
+_FRONT_MAX = 35
+_BACK_MAX = 12
+
+
+def _parse_official(json_str):
+    """解析体彩官方 JSON API 返回的历史开奖（分页内部用）。"""
+    try:
+        data = json.loads(json_str)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    if data.get("success") is not True and data.get("errorCode") != "0":
+        return []
+    value = data.get("value") or {}
+    lst = value.get("list") or []
+    draws = []
+    for item in lst:
+        result = (item.get("lotteryDrawResult") or "").split()
+        if len(result) >= 7:
+            draws.append({
+                "issue": str(item.get("lotteryDrawNum", "") or "").strip(),
+                "front": [int(n) for n in result[:5]],
+                "back": [int(n) for n in result[5:7]],
+                "date": str(item.get("lotteryDrawTime", "") or "").strip()[:10],
+            })
+    return draws
+
+
+def _fetch_official_total():
+    """查询官方接口总期数。"""
+    try:
+        url = OFFICIAL_URL.format(game=OFFICIAL_GAME_NO, pageSize=1, pageNo=1)
+        html = _http_get(url, timeout=15)
+        data = json.loads(html)
+        return int((data.get("value") or {}).get("total", 0))
+    except Exception:
+        return 0
+
+
+def _fetch_official(limit):
+    """从官方接口翻页拉取历史，直至覆盖 limit 或拉完。
+
+    返回按期号降序的原始 draw 列表（未校验）。
+    """
+    draws = []
+    total = _fetch_official_total()
+    if not total:
+        total = limit
+    total = min(total, limit or total)
+    page_no = 1
+    while len(draws) < total:
+        page_size = OFFICIAL_PAGE_SIZE
+        url = OFFICIAL_URL.format(game=OFFICIAL_GAME_NO, pageSize=page_size, pageNo=page_no)
+        html = _http_get(url, timeout=20)
+        page_draws = _parse_official(html)
+        if not page_draws:
+            break
+        draws.extend(page_draws)
+        if len(page_draws) < page_size:
+            break
+        page_no += 1
+    return draws
+
+
+def _is_valid_draw(d):
+    """校验一条开奖记录是否合法（数据完整性门）。
+
+    合法条件：前区 5 个、后区 2 个，前区 1-35、后区 1-12、无重复，期号非空。
+    非法记录必须丢弃，绝不写入缓存/历史 —— 防止脏数据（如 500.com 期号截断、
+    号码错切出 82/90 这类非前区号）污染后续 Bootstrap / 复盘结果。
+    """
+    front = d.get("front") or []
+    back = d.get("back") or []
+    # 必须恰好 5+2
+    if len(front) != 5 or len(back) != 2:
+        return False
+    # 前区必须 1-35，后区必须 1-12
+    if any(not (1 <= int(n) <= _FRONT_MAX) for n in front):
+        return False
+    if any(not (1 <= int(n) <= _BACK_MAX) for n in back):
+        return False
+    # 不允许重复号码
+    if len(set(front)) != 5 or len(set(back)) != 2:
+        return False
+    # 期号非空（主源可能有 date 缺失容忍，但 issue 必须有）
+    if not str(d.get("issue", "") or "").strip():
+        return False
+    return True
+
+
+def _clean_draws(draws):
+    """过滤并规范化，只保留合法记录（脏数据丢弃）。"""
+    cleaned = []
+    for d in draws:
+        nd = _normalize_draw(d)
+        if _is_valid_draw(nd):
+            cleaned.append(nd)
+    return cleaned
 
 
 def _http_get(url, timeout=20):
@@ -175,44 +282,64 @@ def fetch_history(limit=3000, force=False):
     if not force:
         cached = _load_cache()
         if cached:
-            return [_normalize_draw(d) for d in cached]
+            # 缓存也要过校验，防历史脏缓存污染
+            cached = _clean_draws(cached)
+            if cached:
+                return cached
 
     draws = []
 
-    # 2. 尝试体彩官网
+    # 2. 首选：体彩官方 JSON API（翻页拉全量历史，数据最干净完整）
     try:
-        url = f"https://www.lottery.gov.cn/kj/kjlb.html?dlt"
-        html = _http_get(url, timeout=15)
-        draws = _parse_lottery_gov(html)
+        draws = _fetch_official(limit or 3000)
+        draws = _clean_draws(draws)
+        if draws:
+            draws.sort(key=_issue_sort_key, reverse=True)
+            return _save_and_return(draws, limit)
     except Exception as e:
-        print(f"  ⚠️ 体彩官网获取失败: {e}", file=sys.stderr)
+        print(f"  ⚠️ 官方接口获取失败: {e}", file=sys.stderr)
+        draws = []
 
-    # 3. 尝试备用源
-    if not draws:
-        for url_template in BACKUP_URLS:
-            try:
+    # 3. 后备源（js-lottery / 500.com），统一过校验
+    for url_template in BACKUP_URLS:
+        try:
+            if "{limit}" in url_template:
                 url = url_template.format(limit=limit)
-                html = _http_get(url, timeout=15)
-                if "500.com" in url:
-                    draws = _parse_500com(html)
-                else:
-                    draws = _parse_js_lottery(html)
-                if draws:
-                    break
-            except Exception as e:
-                print(f"  ⚠️ 备用源获取失败: {e}", file=sys.stderr)
-                continue
+            else:
+                url = url_template
+            html = _http_get(url, timeout=15)
+            if "500.com" in url:
+                parsed = _parse_500com(html)
+            else:
+                parsed = _parse_js_lottery(html)
+            valid = _clean_draws(parsed)
+            if valid:
+                draws = valid
+                break
+        except Exception as e:
+            print(f"  ⚠️ 后备源获取失败: {e}", file=sys.stderr)
+            continue
 
-    # 4. 规范化并排序
-    draws = [_normalize_draw(d) for d in draws]
-    draws.sort(key=lambda d: d["issue"], reverse=True)
+    # 4. 规范化、排序、落盘
+    draws = _clean_draws(draws)
+    draws.sort(key=_issue_sort_key, reverse=True)
+    return _save_and_return(draws, limit)
 
-    # 5. 保存缓存和历史
+
+def _issue_sort_key(d):
+    """期号排序键：数字型按期号数值，非数字型放最后。"""
+    s = str(d.get("issue", "") or "").strip()
+    if s.isdigit():
+        return (1, int(s))
+    return (0, 0)
+
+
+def _save_and_return(draws, limit=None):
+    """清理后落盘并返回（脏数据不写盘）。"""
     if draws:
         _save_cache(draws)
         _save_history(draws)
-
-    return draws
+    return draws[:limit] if limit else draws
 
 
 def get_latest_draw():

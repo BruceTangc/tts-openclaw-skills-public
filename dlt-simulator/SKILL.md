@@ -212,3 +212,29 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 - **Top-2 Selection Accuracy**：模型Top 2是否包含本期10组候选中最佳表现组合（注意：不是命中率，是选优能力）
 - **Walk-forward 回测**：禁止未来数据泄露
 - **Bootstrap 置信区间**：95% CI 评估策略稳定性
+
+---
+
+## 修复记录（2026-08-20）
+
+对 dlt-simulator 做了一轮正确性修复（审计驱动 + 本地实测），未推倒重做：
+
+### 数据源（fetch_history.py）
+- **官方历史 API**：改用体彩官方 JSON 接口 `webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85`
+  （原 `lottery.gov.cn/kj/kjlb.html?dlt` 实测返回 HTML 壳、无数据）。分页拉全量 2912 期（07001→26094，非法 0）。
+- **数据校验**：新增 `_is_valid_draw()` —— 前区恰 5 个且 1-35、后区 2 个且 1-12、无重复、期号非空。
+  **脏数据一律丢弃，绝不写入缓存/历史**（此前 500.com 会产出期号截断、号码>35 的脏数据并污染缓存）。
+- 源优先级：官方 API → js-lottery → 500.com（全部过校验）。
+
+### 核心 bug（P0）
+- **Bootstrap TypeError**：`bootstrap.py` `for _ in iterations:` → `for _ in range(iterations):`（原为 int 不可迭代，必崩）。
+- **未来数据泄露**：Walk-forward 回测历史过滤改用 `build_history_combos(train_draws)`（只用训练窗口），
+  不再用 `load_history_combos()`（读全量库含测试点之后）。实测：新逻辑无泄露、旧逻辑会泄露。
+- **复盘期号错配**：`review.py` 增加硬性条件 `pred_issue != draw_issue` → 返回 `REVIEW_PENDING`，
+  不对比、不更新 win_count/performance/strategy（防拿上期开奖对比本期预测污染数据）。
+
+### 期号与权重（P1）
+- **期号跨年**：`prediction.py` `compute_next_issue()` 用真实年度末期号表（07=93、08=154…25=150、26=94）
+  判断跨年，当期号达到该年末期跳次年 001。全量 2911 组相邻期号验证 100% 匹配。
+- **评分权重**：`generator.py` 删除恒为 0 的 `prize_prob`，5 项重新归一化
+  （frequency .278 / omission .222 / sum .167 / odd_even .167 / zone .167，和=1.0）。
