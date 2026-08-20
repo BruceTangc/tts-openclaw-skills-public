@@ -47,6 +47,24 @@ def wilson_ci(successes, trials, confidence=None):
     return max(0.0, center - spread), min(1.0, center + spread)
 
 
+def margin_of_error(successes, trials, confidence=None):
+    """
+    置信区间的半宽度（误差范围）
+
+    Args:
+        successes: 成功次数
+        trials: 总试验次数
+        confidence: 置信水平（默认0.95）
+
+    Returns:
+        float: 置信区间的半宽度 (upper - lower) / 2
+    """
+    if trials == 0:
+        return 0.5
+    lower, upper = wilson_ci(successes, trials, confidence)
+    return (upper - lower) / 2
+
+
 def _z_score(confidence):
     """对应置信水平的 z 分数（近似）"""
     # 常用值：90%->1.645, 95%->1.96, 99%->2.576
