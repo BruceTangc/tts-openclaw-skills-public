@@ -113,6 +113,19 @@ def compute_weights(draws, strategy="balanced", window=None):
             w = front_last_seen.get(n, total) + 1
         elif strategy == "trend":
             w = 3.0 if n in rising else 1.0
+        elif strategy == "even_filter":
+            # 过滤偶数策略：前区偏向奇数，偶数权重极低
+            if n % 2 == 0:
+                w = 0.05  # 偶数几乎不选
+            else:
+                w = 1.0
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         elif strategy == "statistical":
             # 统计分析策略：基于卡方检验和置信区间
             w = 1.0
