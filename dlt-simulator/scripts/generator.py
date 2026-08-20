@@ -155,6 +155,21 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w += 0.8
             elif miss > 10:  # 遗漏超过10期
                 w += 0.4
+        elif strategy == "prime_filter":
+            # 过滤质数策略：前区压低质数权重，提升非质数权重
+            _front_primes = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31}
+            if n in _front_primes:
+                w = 0.05
+            else:
+                # 非质数：常规加权（热度+遗漏+趋势）
+                w = 1.0
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -201,6 +216,16 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w += 0.8
             elif miss > 8:  # 遗漏超过8期
                 w += 0.4
+        elif strategy == "prime_filter":
+            # 过滤质数策略：后区压低质数权重，提升非质数权重
+            _back_primes = {2, 3, 5, 7, 11}
+            if n in _back_primes:
+                w = 0.05
+            else:
+                # 非质数：保持热度加权逻辑（与平衡策略一致）
+                w = 1.0
+                if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
+                    w += 1.5
         else:
             w = 1.0
             if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:

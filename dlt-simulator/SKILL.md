@@ -88,6 +88,9 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 predicti
 
 # 候选生成（不保存）
 cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generator.py --count 10 --strategy balanced
+
+# 使用过滤质数策略生成候选
+cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generator.py --count 10 --strategy prime_filter
 ```
 
 ### 模拟类
@@ -207,6 +210,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 | `cold` | 偏向长期未出的冷号 |
 | `trend` | 偏向近期频率上升的号码 |
 | `statistical` | 基于卡方检验和置信区间的统计分析策略 |
+| `prime_filter` | 过滤质数号码策略：压低质数权重、提升非质数权重 |
 
 ## 核心指标
 
