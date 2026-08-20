@@ -113,6 +113,35 @@ def compute_weights(draws, strategy="balanced", window=None):
             w = front_last_seen.get(n, total) + 1
         elif strategy == "trend":
             w = 3.0 if n in rising else 1.0
+        elif strategy == "statistical":
+            # 统计分析策略：基于卡方检验和置信区间
+            w = 1.0
+            # 1. 卡方检验权重：偏离均匀分布的号码加权
+            observed = front_freq.get(n, 0)
+            expected = total * 5 / 35  # 期望频次
+            chi2_contrib = (observed - expected) ** 2 / expected if expected > 0 else 0
+            if chi2_contrib > 3.84:  # 95%显著性阈值
+                w += 1.5  # 显著偏离
+            elif chi2_contrib > 2.71:  # 90%显著性阈值
+                w += 1.0  # 边缘显著
+            
+            # 2. 置信区间权重：频率偏离置信区间
+            if total > 0:
+                from confidence import wilson_ci
+                ci_low, ci_high = wilson_ci(observed, total)
+                p_hat = observed / total
+                expected_freq = 5 / 35
+                if p_hat > ci_high:  # 频率显著偏高
+                    w += 1.0
+                elif p_hat < ci_low:  # 频率显著偏低
+                    w += 0.5  # 低频号码也给一定权重（均值回归假设）
+            
+            # 3. 遗漏值权重：长期未出现的号码（均值回归假设）
+            miss = front_last_seen.get(n, total)
+            if miss > 20:  # 遗漏超过20期
+                w += 0.8
+            elif miss > 10:  # 遗漏超过10期
+                w += 0.4
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -130,6 +159,35 @@ def compute_weights(draws, strategy="balanced", window=None):
             w = back_freq.get(n, 0) + 1
         elif strategy == "cold":
             w = back_last_seen.get(n, total) + 1
+        elif strategy == "statistical":
+            # 统计分析策略：基于卡方检验和置信区间
+            w = 1.0
+            # 1. 卡方检验权重
+            observed = back_freq.get(n, 0)
+            expected = total * 2 / 12  # 期望频次
+            chi2_contrib = (observed - expected) ** 2 / expected if expected > 0 else 0
+            if chi2_contrib > 3.84:  # 95%显著性阈值
+                w += 1.5  # 显著偏离
+            elif chi2_contrib > 2.71:  # 90%显著性阈值
+                w += 1.0  # 边缘显著
+            
+            # 2. 置信区间权重
+            if total > 0:
+                from confidence import wilson_ci
+                ci_low, ci_high = wilson_ci(observed, total)
+                p_hat = observed / total
+                expected_freq = 2 / 12
+                if p_hat > ci_high:  # 频率显著偏高
+                    w += 1.0
+                elif p_hat < ci_low:  # 频率显著偏低
+                    w += 0.5  # 低频号码也给一定权重
+            
+            # 3. 遗漏值权重
+            miss = back_last_seen.get(n, total)
+            if miss > 15:  # 遗漏超过15期
+                w += 0.8
+            elif miss > 8:  # 遗漏超过8期
+                w += 0.4
         else:
             w = 1.0
             if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:

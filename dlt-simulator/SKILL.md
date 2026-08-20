@@ -206,6 +206,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 | `hot` | 偏向近期高频出现的热号 |
 | `cold` | 偏向长期未出的冷号 |
 | `trend` | 偏向近期频率上升的号码 |
+| `statistical` | 基于卡方检验和置信区间的统计分析策略 |
 
 ## 核心指标
 
