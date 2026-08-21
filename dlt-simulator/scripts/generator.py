@@ -9,7 +9,7 @@ import random
 import math
 from collections import Counter
 
-from common import load_config, combination_key
+from common import load_config, combination_key, mean, std
 
 cfg = load_config()
 FRONT_MIN = cfg["front_min"]
@@ -207,6 +207,33 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
+        elif strategy == "sum_filter":
+            # 和值过滤策略：基于和值偏离理论中心的 z-score 压制大号或小号
+            _FRONT_THEORY_CENTER = 90.0
+            front_sums = [sum(d["front"]) for d in data]
+            suppress_front_large = False
+            suppress_front_small = False
+            if len(front_sums) >= 2 and std(front_sums) > 0:
+                _mean_sum = mean(front_sums)
+                _std_sum = std(front_sums)
+                _z = (_mean_sum - _FRONT_THEORY_CENTER) / _std_sum
+                if _z > 1.0:
+                    suppress_front_large = True
+                elif _z < -1.0:
+                    suppress_front_small = True
+            w = 1.0
+            if suppress_front_large and n >= 19:
+                w *= 0.5
+            elif suppress_front_small and n <= 18:
+                w *= 0.5
+            if w == 1.0:
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -288,6 +315,29 @@ def compute_weights(draws, strategy="balanced", window=None):
             else:
                 w = 1.0
                 if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
+                    w += 1.5
+        elif strategy == "sum_filter":
+            # 和值过滤策略：基于和值偏离理论中心的 z-score 压制大号或小号
+            _BACK_THEORY_CENTER = 13.0
+            back_sums = [sum(d["back"]) for d in data]
+            suppress_back_large = False
+            suppress_back_small = False
+            if len(back_sums) >= 2 and std(back_sums) > 0:
+                _mean_sum = mean(back_sums)
+                _std_sum = std(back_sums)
+                _z = (_mean_sum - _BACK_THEORY_CENTER) / _std_sum
+                if _z > 1.0:
+                    suppress_back_large = True
+                elif _z < -1.0:
+                    suppress_back_small = True
+            _back_hot = [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]
+            w = 1.0
+            if suppress_back_large and n >= 7:
+                w *= 0.5
+            elif suppress_back_small and n <= 6:
+                w *= 0.5
+            if w == 1.0:
+                if n in _back_hot:
                     w += 1.5
         else:
             w = 1.0
