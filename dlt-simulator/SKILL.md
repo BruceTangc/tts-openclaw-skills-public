@@ -224,6 +224,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 | `hot` | 偏向近期高频出现的热号 |
 | `cold` | 偏向长期未出的冷号 |
 | `trend` | 偏向近期频率上升的号码 |
+| `even_filter` | 过滤偶数策略：前区偏向奇数，偶数权重压到 0.05（几乎不选），奇数叠加热号/遗漏/趋势加成；仅作用于前区，后区按 balanced 计算 |
 | `statistical` | 基于卡方检验和置信区间的统计分析策略 |
 | `prime_filter` | 过滤质数号码策略：压低质数权重、提升非质数权重 |
 | `tail_filter` | 尾数过滤策略：压低高频尾数权重、提升低频尾数权重 |
