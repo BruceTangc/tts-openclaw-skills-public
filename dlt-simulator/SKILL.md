@@ -231,6 +231,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 | `odd_even_balance_filter` | 奇偶平衡过滤策略：压低过热奇/偶数权重、前后区独立统计 |
 | `sum_filter` | 和值过滤策略：基于历史 window 期开奖和值均值回归，压低偏离理论中心（前区90/后区13）方向的号码权重 |
 | `zone_filter` | 区间段平衡过滤策略：window 期各段频次统计，过热段（RATIO≥1.5 + GAP≥2.0 + Z≥1.0）内号码权重压到 0.5，实现段位均值回归，前后区独立统计、阈值共用 |
+| `repeat_filter` | 重号过滤策略：压制「上期（最近一期）已开出号码」权重到 0.5（体现重号概率低规律），未开出号码按 balanced 基础权重（前区 hot/miss/rising 加成，后区 hot 加成）；前后区独立统计，空数据退化全 1.0 |
 | `hot+tail_filter` 等组合 | 多策略组合：用 `+` 连接多个策略名（如 `hot+tail_filter`），各策略权重逐号相乘融合（product），前后区独立、不归一化；未知策略名自动跳过并告警，空表达式回退 `balanced` |
 
 **组合语义**：多策略组合 = 各单策略权重逐号相乘（product）融合，不做归一化（如 `hot+cold` 同时给热号、冷号高权重，等权叠加后整体更均衡）。`trend` / `even_filter` 只作用于前区（后区无对应分支，按 `balanced` 计算），故 `hot+trend` 的后区权重等价于 `hot+balanced` 的后区权重。

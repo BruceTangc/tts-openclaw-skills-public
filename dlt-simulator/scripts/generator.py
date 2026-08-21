@@ -26,6 +26,7 @@ _KNOWN_STRATEGIES = frozenset({
     "balanced", "hot", "cold", "trend", "even_filter",
     "statistical", "prime_filter", "tail_filter",
     "odd_even_balance_filter", "sum_filter", "zone_filter",
+    "repeat_filter",
 })
 
 
@@ -330,6 +331,23 @@ def _compute_weights_single(draws, name, window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
+        elif name == "repeat_filter":
+            # 重号过滤策略：前区压制「上期（最近一期 data[0]）已开出的号码」
+            # 权重到 0.5，体现彩票「重号概率低」规律；未开出的号码按 balanced
+            # 基础权重（1.0 + hot 加成 1.5 + miss>15 加成 1.0 + rising 加成 0.5）。
+            # 空数据退化由上方 total==0 提前返回处理；data[0] 即最近一期，
+            # 与 window 无关（window 只截取统计期数范围）。前后区独立统计。
+            if n in data[0]["front"]:
+                w = 0.5
+            else:
+                w = 1.0
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -468,6 +486,15 @@ def _compute_weights_single(draws, name, window=None):
             else:
                 w = 1.0
                 if n in _back_hot:
+                    w += 1.5
+        elif name == "repeat_filter":
+            # 重号过滤策略：后区独立统计，压制「上期（最近一期 data[0]）已开出
+            # 的号码」权重到 0.5；未开出的号码按 balanced 基础权重。
+            if n in data[0]["back"]:
+                w = 0.5
+            else:
+                w = 1.0
+                if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
                     w += 1.5
         else:
             w = 1.0
