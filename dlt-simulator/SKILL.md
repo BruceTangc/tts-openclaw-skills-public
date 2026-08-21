@@ -232,6 +232,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 | `sum_filter` | 和值过滤策略：基于历史 window 期开奖和值均值回归，压低偏离理论中心（前区90/后区13）方向的号码权重 |
 | `zone_filter` | 区间段平衡过滤策略：window 期各段频次统计，过热段（RATIO≥1.5 + GAP≥2.0 + Z≥1.0）内号码权重压到 0.5，实现段位均值回归，前后区独立统计、阈值共用 |
 | `repeat_filter` | 重号过滤策略：压制「上期（最近一期）已开出号码」权重到 0.5（体现重号概率低规律），未开出号码按 balanced 基础权重（前区 hot/miss/rising 加成，后区 hot 加成）；前后区独立统计，空数据退化全 1.0 |
+| `span_filter` | 跨度过滤策略：统计 window 期每期跨度（前区 max−min，后区 max−min）均值，偏离理论中心（前区24/后区6）时压制「导致偏离」的号码到 0.5 实现跨度回归——μ_f>24 压制前区极端号（n≤10 或 n≥26）、μ_f<24 压制前区中心号（11≤n≤25）；μ_b>6 压制后区极端号（n≤2 或 n≥11）、μ_b<6 压制后区中心号（3≤n≤10）；其余按 balanced 基础权重；前后区独立统计，空数据退化全 1.0，单期（跨度样本<2）退化 balanced 不压制，越界号码忽略 |
 | `hot+tail_filter` 等组合 | 多策略组合：用 `+` 连接多个策略名（如 `hot+tail_filter`），各策略权重逐号相乘融合（product），前后区独立、不归一化；未知策略名自动跳过并告警，空表达式回退 `balanced` |
 
 **组合语义**：多策略组合 = 各单策略权重逐号相乘（product）融合，不做归一化（如 `hot+cold` 同时给热号、冷号高权重，等权叠加后整体更均衡）。`trend` / `even_filter` 只作用于前区（后区无对应分支，按 `balanced` 计算），故 `hot+trend` 的后区权重等价于 `hot+balanced` 的后区权重。

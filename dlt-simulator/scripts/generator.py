@@ -26,7 +26,7 @@ _KNOWN_STRATEGIES = frozenset({
     "balanced", "hot", "cold", "trend", "even_filter",
     "statistical", "prime_filter", "tail_filter",
     "odd_even_balance_filter", "sum_filter", "zone_filter",
-    "repeat_filter",
+    "repeat_filter", "span_filter",
 })
 
 
@@ -348,6 +348,43 @@ def _compute_weights_single(draws, name, window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
+        elif name == "span_filter":
+            # 跨度过滤策略：压制「跨度偏离历史均值」的号码，实现跨度回归。
+            # 前区（1-35，取5）：统计 window 期每期跨度 max(front)-min(front)
+            # 的均值 μ_f，理论跨度中心 = 24。μ_f > 24（历史偏分散）→ 压制
+            # 「极端号」（n≤10 或 n≥26）到 0.5，让跨度收敛；μ_f < 24（历史偏
+            # 集中）→ 压制「中心号」（11≤n≤25）到 0.5，让跨度发散。其余号码
+            # 按 balanced 基础权重（1.0 + hot 1.5 + miss>15 1.0 + rising 0.5）。
+            # 边界：空数据走 total==0 提前返回；跨度样本 <2（如单期）无法判断
+            # 偏离 → 退化 balanced 不压制；越界号码忽略不参与跨度统计；
+            # window 只截取统计期数范围；前后区独立统计。
+            _FRONT_SPAN_CENTER = 24.0  # 前区理论跨度中心（彩票经验值）
+            _front_spans = []
+            for d in data:
+                _vals = [nn for nn in d["front"] if FRONT_MIN <= nn <= FRONT_MAX]
+                if len(_vals) >= 2:  # 越界号/脏数据导致有效号码不足2个 → 跳过该期
+                    _front_spans.append(max(_vals) - min(_vals))
+            _suppress_front_extremes = False
+            _suppress_front_center = False
+            if len(_front_spans) >= 2:  # 单期（1 个跨度样本）无法判断偏离 → 不压制
+                _mu_f = mean(_front_spans)
+                if _mu_f > _FRONT_SPAN_CENTER:
+                    _suppress_front_extremes = True
+                elif _mu_f < _FRONT_SPAN_CENTER:
+                    _suppress_front_center = True
+            if _suppress_front_extremes and (n <= 10 or n >= 26):
+                w = 0.5  # μ_f>24：压制极端号，跨度回归
+            elif _suppress_front_center and 11 <= n <= 25:
+                w = 0.5  # μ_f<24：压制中心号，跨度回归
+            else:
+                w = 1.0
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -495,6 +532,37 @@ def _compute_weights_single(draws, name, window=None):
             else:
                 w = 1.0
                 if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
+                    w += 1.5
+        elif name == "span_filter":
+            # 跨度过滤策略（后区，与前区独立统计、对称设计）：统计 window 期
+            # 每期后区跨度 max(back)-min(back) 的均值 μ_b，理论跨度中心 = 6。
+            # μ_b > 6（历史偏分散）→ 压制「极端号」（n≤2 或 n≥11）到 0.5；
+            # μ_b < 6（历史偏集中）→ 压制「中心号」（3≤n≤10）到 0.5。
+            # 其余按 balanced（1.0 + hot 加成 1.5）。边界同前区：空数据走
+            # total==0 提前返回；跨度样本 <2（如单期）→ 退化 balanced 不压制；
+            # 越界号码忽略不参与统计；window 只截取统计期数范围。
+            _BACK_SPAN_CENTER = 6.0  # 后区理论跨度中心（彩票经验值）
+            _back_spans = []
+            for d in data:
+                _vals = [nn for nn in d["back"] if BACK_MIN <= nn <= BACK_MAX]
+                if len(_vals) >= 2:  # 有效号码不足2个 → 跳过该期
+                    _back_spans.append(max(_vals) - min(_vals))
+            _suppress_back_extremes = False
+            _suppress_back_center = False
+            if len(_back_spans) >= 2:  # 单期无法判断偏离 → 不压制
+                _mu_b = mean(_back_spans)
+                if _mu_b > _BACK_SPAN_CENTER:
+                    _suppress_back_extremes = True
+                elif _mu_b < _BACK_SPAN_CENTER:
+                    _suppress_back_center = True
+            _back_hot = [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]
+            if _suppress_back_extremes and (n <= 2 or n >= 11):
+                w = 0.5  # μ_b>6：压制极端号，跨度回归
+            elif _suppress_back_center and 3 <= n <= 10:
+                w = 0.5  # μ_b<6：压制中心号，跨度回归
+            else:
+                w = 1.0
+                if n in _back_hot:
                     w += 1.5
         else:
             w = 1.0
