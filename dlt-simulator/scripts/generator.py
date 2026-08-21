@@ -234,6 +234,43 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
+        elif strategy == "zone_filter":
+            # 区间段平衡过滤策略：前区 1-35 分 7 段（每段 5 号），段号=(n-1)//5
+            # 段0={1..5}、段1={6..10}、...、段6={31..35}。统计最近 window 期
+            # 各段累计出号频次，压制"过热段"（显著高于均匀期望）内所有号码权重到 0.5，
+            # 实现段位平衡回归。
+            _FRONT_ZONE_NUM = 7     # 前区段数
+            _FRONT_ZONE_SIZE = 5    # 每段号码数
+            _ZONE_HOT_RATIO = 1.5   # 比值阈值：段出号 ≥ 期望的 1.5 倍才算过热（经济显著性）
+            _ZONE_MIN_GAP = 2.0     # 绝对下限：至少比期望多出 2 次（防小窗口单次波动误触发）
+            _ZONE_MIN_Z = 1.0       # 跨段 z-score 下限（统计显著性，需段间有离散度）
+            _front_zone_freq = [0] * _FRONT_ZONE_NUM
+            for d in data:
+                for nn in d["front"]:
+                    _front_zone_freq[(nn - 1) // _FRONT_ZONE_SIZE] += 1
+            _front_zone_exp = FRONT_PICK * total / _FRONT_ZONE_NUM  # 均匀期望 = 5*window/7
+            _front_zone_std = std(_front_zone_freq)                 # 样本标准差（common.std）
+            _front_hot_zones = set()
+            # 退化：window<2 → 不压制（balanced 风格，全 1.0 起算）
+            if total >= 2:
+                for _z_i, _f in enumerate(_front_zone_freq):
+                    _gap = _f - _front_zone_exp
+                    if _f >= _front_zone_exp * _ZONE_HOT_RATIO and _gap >= _ZONE_MIN_GAP:
+                        # std<=0（各段全相等）时 z 无意义 → 退化为仅用比值+下限判定；
+                        # 此时各段必恰等于期望（5w 总和 / 7 段），比值条件自然不成立 → 无压制。
+                        if _front_zone_std <= 0 or _gap / _front_zone_std >= _ZONE_MIN_Z:
+                            _front_hot_zones.add(_z_i)
+            if (n - 1) // _FRONT_ZONE_SIZE in _front_hot_zones:
+                w = 0.5  # 过热段：段内所有号码权重压到 0.5（段位平衡回归）
+            else:
+                w = 1.0
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -337,6 +374,39 @@ def compute_weights(draws, strategy="balanced", window=None):
             elif suppress_back_small and n <= 6:
                 w *= 0.5
             if w == 1.0:
+                if n in _back_hot:
+                    w += 1.5
+        elif strategy == "zone_filter":
+            # 区间段平衡过滤策略：后区 1-12 分 4 段（每段 3 号），段号=(n-1)//3
+            # 段0={1..3}、段1={4..6}、段2={7..9}、段3={10..12}，与前区独立统计、对称设计。
+            # 阈值与前区共用同一套（比值/绝对下限/z-score）：三者均为无量纲量
+            # （相对比值 + 标准差归一化），前区 7 段 vs 后区 4 段的段数差异和
+            # 单期出号率差异（5/7 vs 2/4）已被期望与 std 归一化吸收，无需分设阈值；
+            # 段数少时 std 更不稳，但三重条件（比值+下限+z）在两侧都偏保守。
+            _BACK_ZONE_NUM = 4     # 后区段数
+            _BACK_ZONE_SIZE = 3    # 每段号码数
+            # 共享阈值（与前区同一套，无量纲化设计，见前区注释）
+            _ZONE_HOT_RATIO = 1.5
+            _ZONE_MIN_GAP = 2.0
+            _ZONE_MIN_Z = 1.0
+            _back_zone_freq = [0] * _BACK_ZONE_NUM
+            for d in data:
+                for nn in d["back"]:
+                    _back_zone_freq[(nn - 1) // _BACK_ZONE_SIZE] += 1
+            _back_zone_exp = BACK_PICK * total / _BACK_ZONE_NUM  # 均匀期望 = 2*window/4 = window/2
+            _back_zone_std = std(_back_zone_freq)
+            _back_hot_zones = set()
+            if total >= 2:  # 退化：window<2 → 不压制
+                for _z_i, _f in enumerate(_back_zone_freq):
+                    _gap = _f - _back_zone_exp
+                    if _f >= _back_zone_exp * _ZONE_HOT_RATIO and _gap >= _ZONE_MIN_GAP:
+                        if _back_zone_std <= 0 or _gap / _back_zone_std >= _ZONE_MIN_Z:
+                            _back_hot_zones.add(_z_i)
+            _back_hot = [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]
+            if (n - 1) // _BACK_ZONE_SIZE in _back_hot_zones:
+                w = 0.5  # 过热段：段内所有号码权重压到 0.5
+            else:
+                w = 1.0
                 if n in _back_hot:
                     w += 1.5
         else:
