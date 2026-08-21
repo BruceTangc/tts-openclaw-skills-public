@@ -124,14 +124,25 @@ def test_back_low_sum_suppress_small():
 
 
 def test_window_degenerate():
-    """window<2 退化（无压制/权重有效）"""
+    """window<2 退化（数据量<2，无压制/权重有效）"""
     draws = [{"front": [10, 15, 20, 25, 30], "back": [5, 10]}]
     front_w, back_w = compute_weights(draws, strategy="sum_filter", window=1)
     for n in range(FRONT_MIN, FRONT_MAX + 1):
         assert front_w[n] >= 1.0, f"前区号码 {n} 退化时权重应>=1.0, 实际: {front_w[n]}"
     for n in range(BACK_MIN, BACK_MAX + 1):
         assert back_w[n] >= 1.0, f"后区号码 {n} 退化时权重应>=1.0, 实际: {back_w[n]}"
-    print("PASS: window<2 退化 → 无压制")
+    print("PASS: window<2 退化（数据量<2）→ 无压制")
+
+
+def test_window_param_truncation():
+    """window=1 截断：30条数据只取最近1期，len=1<2触发退化，无0.5压制"""
+    draws = _make_front_high_sum_draws(30)
+    front_w, back_w = compute_weights(draws, strategy="sum_filter", window=1)
+    for n in range(FRONT_MIN, FRONT_MAX + 1):
+        assert front_w[n] >= 1.0, f"前区号码 {n} window=1退化应>=1.0（无0.5压制）, 实际: {front_w[n]}"
+    for n in range(BACK_MIN, BACK_MAX + 1):
+        assert back_w[n] >= 1.0, f"后区号码 {n} window=1退化应>=1.0（无0.5压制）, 实际: {back_w[n]}"
+    print("PASS: window=1 截断 → 30条数据只取最近1期 → len=1<2退化 → 无0.5压制")
 
 
 def test_integration_generate():
@@ -170,6 +181,7 @@ if __name__ == "__main__":
     test_back_high_sum_suppress_large()
     test_back_low_sum_suppress_small()
     test_window_degenerate()
+    test_window_param_truncation()
     test_integration_generate()
     test_empty_draws()
     print("\nAll sum_filter strategy tests passed!")
