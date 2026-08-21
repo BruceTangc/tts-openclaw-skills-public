@@ -190,8 +190,13 @@ def compute_weights(draws, strategy="balanced", window=None):
             # 统计前区奇偶频次
             _front_odd_freq = sum(1 for d in data for nn in d["front"] if nn % 2 == 1)
             _front_even_freq = sum(1 for d in data for nn in d["front"] if nn % 2 == 0)
-            _front_suppress_odd = _front_odd_freq > _front_even_freq
-            if (n % 2 == 1 and _front_suppress_odd) or (n % 2 == 0 and not _front_suppress_odd):
+            if _front_odd_freq > _front_even_freq:
+                suppress = (n % 2 == 1)   # 奇数过热，压低奇数
+            elif _front_even_freq > _front_odd_freq:
+                suppress = (n % 2 == 0)   # 偶数过热，压低偶数
+            else:
+                suppress = False          # tie，不压低任何一方
+            if suppress:
                 w = 0.05
             else:
                 w = 1.0
@@ -272,8 +277,13 @@ def compute_weights(draws, strategy="balanced", window=None):
             # 奇偶平衡过滤策略：压低过热的一类号码（奇数或偶数），前后区独立统计
             _back_odd_freq = sum(1 for d in data for nn in d["back"] if nn % 2 == 1)
             _back_even_freq = sum(1 for d in data for nn in d["back"] if nn % 2 == 0)
-            _back_suppress_odd = _back_odd_freq > _back_even_freq
-            if (n % 2 == 1 and _back_suppress_odd) or (n % 2 == 0 and not _back_suppress_odd):
+            if _back_odd_freq > _back_even_freq:
+                suppress = (n % 2 == 1)   # 奇数过热，压低奇数
+            elif _back_even_freq > _back_odd_freq:
+                suppress = (n % 2 == 0)   # 偶数过热，压低偶数
+            else:
+                suppress = False          # tie，不压低任何一方
+            if suppress:
                 w = 0.05
             else:
                 w = 1.0

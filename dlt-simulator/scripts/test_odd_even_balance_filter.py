@@ -197,6 +197,80 @@ def test_odd_even_balance_vs_balanced():
     print("PASS: odd_even_balance_filter与balanced策略有差异")
 
 
+def test_odd_even_balance_tie_no_suppress():
+    """测试奇偶频次相等(tie)时，奇数和偶数都不应被压低"""
+    # 前区：2奇3偶 和 3奇2偶交替，总计奇偶频次相等
+    draws = [
+        {"front": [1, 2, 3, 4, 6], "back": [1, 2]},   # 2奇3偶
+        {"front": [1, 3, 5, 2, 4], "back": [1, 2]},   # 3奇2偶
+    ]
+    front_w, back_w = compute_weights(draws, strategy="odd_even_balance_filter")
+
+    # tie时奇数和偶数都不应被压低到0.05
+    for n in range(FRONT_MIN, FRONT_MAX + 1):
+        assert front_w[n] > 0.5, f"前区号码 {n} 在tie时权重应>0.5(未被压低), 实际: {front_w[n]}"
+
+    # 后区同样验证
+    for n in range(BACK_MIN, BACK_MAX + 1):
+        assert back_w[n] > 0.5, f"后区号码 {n} 在tie时权重应>0.5(未被压低), 实际: {back_w[n]}"
+
+    print("PASS: 奇偶频次相等(tie)时两边都不压低")
+
+
+def test_odd_even_balance_window_front():
+    """测试window参数：前区只统计window范围内的奇偶频次"""
+    draws = []
+    # 前5期：全奇数前区（奇数过热）
+    for i in range(5):
+        draws.append({"front": [1, 3, 5, 7, 9], "back": [1, 3]})
+    # 后20期：全偶数前区（偶数过热）
+    for i in range(20):
+        draws.append({"front": [2, 4, 6, 8, 10], "back": [1, 3]})
+
+    # window=5：只看前5期（全奇数），奇数应被压低
+    front_w_win5, _ = compute_weights(draws, strategy="odd_even_balance_filter", window=5)
+    for n in [1, 3, 5, 7, 9]:
+        assert front_w_win5[n] <= 0.1, f"window=5时奇数 {n} 应被压低(前5期全奇数), 实际: {front_w_win5[n]}"
+    for n in [2, 4, 6, 8, 10]:
+        assert front_w_win5[n] > 0.5, f"window=5时偶数 {n} 权重应较高, 实际: {front_w_win5[n]}"
+
+    # window=None：看全部25期，后20期全偶数 > 前5期全奇数，偶数应被压低
+    front_w_all, _ = compute_weights(draws, strategy="odd_even_balance_filter", window=None)
+    for n in [2, 4, 6, 8, 10]:
+        assert front_w_all[n] <= 0.1, f"window=None时偶数 {n} 应被压低(20期偶数>5期奇数), 实际: {front_w_all[n]}"
+    for n in [1, 3, 5, 7, 9]:
+        assert front_w_all[n] > 0.5, f"window=None时奇数 {n} 权重应较高, 实际: {front_w_all[n]}"
+
+    print("PASS: window参数正确限制统计范围(前区)")
+
+
+def test_odd_even_balance_window_back():
+    """测试window参数：后区只统计window范围内的奇偶频次"""
+    draws = []
+    # 前5期：后区全奇数
+    for i in range(5):
+        draws.append({"front": [1, 3, 5, 7, 9], "back": [1, 3]})
+    # 后15期：后区全偶数
+    for i in range(15):
+        draws.append({"front": [1, 3, 5, 7, 9], "back": [2, 4]})
+
+    # window=5：只看前5期（全奇数后区），后区奇数应被压低
+    _, back_w_win5 = compute_weights(draws, strategy="odd_even_balance_filter", window=5)
+    for n in [1, 3, 5, 7, 9, 11]:
+        assert back_w_win5[n] <= 0.1, f"window=5时后区奇数 {n} 应被压低, 实际: {back_w_win5[n]}"
+    for n in [2, 4, 6, 8, 10, 12]:
+        assert back_w_win5[n] > 0.5, f"window=5时后区偶数 {n} 权重应较高, 实际: {back_w_win5[n]}"
+
+    # window=None：看全部20期，后15期偶数>前5期奇数，偶数应被压低
+    _, back_w_all = compute_weights(draws, strategy="odd_even_balance_filter", window=None)
+    for n in [2, 4, 6, 8, 10, 12]:
+        assert back_w_all[n] <= 0.1, f"window=None时后区偶数 {n} 应被压低, 实际: {back_w_all[n]}"
+    for n in [1, 3, 5, 7, 9, 11]:
+        assert back_w_all[n] > 0.5, f"window=None时后区奇数 {n} 权重应较高, 实际: {back_w_all[n]}"
+
+    print("PASS: window参数正确限制统计范围(后区)")
+
+
 if __name__ == "__main__":
     test_odd_even_balance_strategy_weights()
     test_odd_even_balance_front_odd_suppressed()
@@ -206,4 +280,7 @@ if __name__ == "__main__":
     test_odd_even_balance_edge_cases()
     test_odd_even_balance_integration()
     test_odd_even_balance_vs_balanced()
+    test_odd_even_balance_tie_no_suppress()
+    test_odd_even_balance_window_front()
+    test_odd_even_balance_window_back()
     print("\nAll odd_even_balance_filter strategy tests passed!")
