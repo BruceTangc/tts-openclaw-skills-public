@@ -94,6 +94,9 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generato
 
 # 使用尾数过滤策略生成候选
 cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generator.py --count 10 --strategy tail_filter
+
+# 使用奇偶平衡过滤策略生成候选
+cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generator.py --count 10 --strategy odd_even_balance_filter
 ```
 
 ### 模拟类
@@ -215,6 +218,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 | `statistical` | 基于卡方检验和置信区间的统计分析策略 |
 | `prime_filter` | 过滤质数号码策略：压低质数权重、提升非质数权重 |
 | `tail_filter` | 尾数过滤策略：压低高频尾数权重、提升低频尾数权重 |
+| `odd_even_balance_filter` | 奇偶平衡过滤策略：压低过热奇/偶数权重、前后区独立统计 |
 
 ## 核心指标
 

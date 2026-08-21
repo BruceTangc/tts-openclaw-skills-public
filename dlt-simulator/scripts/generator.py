@@ -185,6 +185,23 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
+        elif strategy == "odd_even_balance_filter":
+            # 奇偶平衡过滤策略：压低过热的一类号码（奇数或偶数）
+            # 统计前区奇偶频次
+            _front_odd_freq = sum(1 for d in data for nn in d["front"] if nn % 2 == 1)
+            _front_even_freq = sum(1 for d in data for nn in d["front"] if nn % 2 == 0)
+            _front_suppress_odd = _front_odd_freq > _front_even_freq
+            if (n % 2 == 1 and _front_suppress_odd) or (n % 2 == 0 and not _front_suppress_odd):
+                w = 0.05
+            else:
+                w = 1.0
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -246,6 +263,17 @@ def compute_weights(draws, strategy="balanced", window=None):
             _back_tail_freq = Counter(n % 10 for d in data for n in d["back"])
             _top2_tails = {t for t, _ in _back_tail_freq.most_common(2)}
             if n % 10 in _top2_tails:
+                w = 0.05
+            else:
+                w = 1.0
+                if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
+                    w += 1.5
+        elif strategy == "odd_even_balance_filter":
+            # 奇偶平衡过滤策略：压低过热的一类号码（奇数或偶数），前后区独立统计
+            _back_odd_freq = sum(1 for d in data for nn in d["back"] if nn % 2 == 1)
+            _back_even_freq = sum(1 for d in data for nn in d["back"] if nn % 2 == 0)
+            _back_suppress_odd = _back_odd_freq > _back_even_freq
+            if (n % 2 == 1 and _back_suppress_odd) or (n % 2 == 0 and not _back_suppress_odd):
                 w = 0.05
             else:
                 w = 1.0
