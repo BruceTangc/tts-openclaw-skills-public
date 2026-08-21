@@ -7,6 +7,7 @@ generator.py — 候选生成+评分模块
 """
 import random
 import math
+import warnings
 from collections import Counter
 
 from common import load_config, combination_key, mean, std
@@ -20,6 +21,12 @@ BACK_MAX = cfg["back_max"]
 BACK_PICK = cfg["back_pick"]
 POOL_SIZE = cfg["candidate_pool_size"]
 MAX_FRONT_OVERLAP = cfg["max_front_overlap"]
+
+_KNOWN_STRATEGIES = frozenset({
+    "balanced", "hot", "cold", "trend", "even_filter",
+    "statistical", "prime_filter", "tail_filter",
+    "odd_even_balance_filter", "sum_filter", "zone_filter",
+})
 
 
 def weighted_sample(pool_weights, k):
@@ -48,13 +55,64 @@ def weighted_sample(pool_weights, k):
     return sorted(chosen)
 
 
+def _parse_strategies(strategy):
+    """解析 "+" 分隔的策略表达式 → 去重保序的已知策略名列表。"""
+    if strategy is None:
+        strategy = ""
+    else:
+        strategy = str(strategy).strip()
+    names, seen = [], set()
+    for part in strategy.split("+"):
+        p = part.strip()
+        if not p:
+            continue
+        if p not in _KNOWN_STRATEGIES:
+            warnings.warn(f"未知策略 '{p}'，已跳过", UserWarning, stacklevel=2)
+            continue
+        if p in seen:
+            continue
+        seen.add(p)
+        names.append(p)
+    return names if names else ["balanced"]
+
+
 def compute_weights(draws, strategy="balanced", window=None):
     """
-    根据策略计算号码权重
+    根据策略计算号码权重，支持多策略 "+" 组合（逐号相乘融合，不归一化）。
+
+    Args:
+        draws: 历史开奖数据列表（含 "front"/"back" 键的字典）。
+        strategy: 策略名。单个名称（如 "hot"）或用 "+" 组合多个
+                  （如 "hot+tail_filter"）。多策略时前后区独立、
+                  各策略权重逐号相乘（product）融合，不归一化。
+                  未知策略名自动跳过并告警；空表达式回退 "balanced"。
+        window: 可选，仅用最近 window 期数据。
 
     Returns:
-        dict: front_weights, back_weights
+        tuple: (front_weights, back_weights)，均为 {号码: 权重} 字典。
+
+    组合语义：
+        - 多策略融合 = 各单策略权重逐号相乘（product），不做归一化
+          （如 "hot+cold" 同时给热号、冷号高权重，等权叠加后整体更均衡）。
+        - trend / even_filter 只作用于前区（后区无对应分支，按 balanced
+          计算），故 "hot+trend" 的后区权重等价于 "hot+balanced" 的后区权重。
     """
+    names = _parse_strategies(strategy)
+    if len(names) == 1:
+        return _compute_weights_single(draws, names[0], window)
+    front_w = {n: 1.0 for n in range(FRONT_MIN, FRONT_MAX + 1)}
+    back_w = {n: 1.0 for n in range(BACK_MIN, BACK_MAX + 1)}
+    for nm in names:
+        fw, bw = _compute_weights_single(draws, nm, window)
+        for n in range(FRONT_MIN, FRONT_MAX + 1):
+            front_w[n] *= fw.get(n, 1.0)
+        for n in range(BACK_MIN, BACK_MAX + 1):
+            back_w[n] *= bw.get(n, 1.0)
+    return front_w, back_w
+
+
+def _compute_weights_single(draws, name, window=None):
+    """单策略权重计算（内部）。name 为单一策略名"""
     data = draws[:window] if window else draws
     total = len(data)
     if total == 0:
@@ -107,13 +165,13 @@ def compute_weights(draws, strategy="balanced", window=None):
     # 构建权重
     front_w = {}
     for n in range(FRONT_MIN, FRONT_MAX + 1):
-        if strategy == "hot":
+        if name == "hot":
             w = front_freq.get(n, 0) + 1
-        elif strategy == "cold":
+        elif name == "cold":
             w = front_last_seen.get(n, total) + 1
-        elif strategy == "trend":
+        elif name == "trend":
             w = 3.0 if n in rising else 1.0
-        elif strategy == "even_filter":
+        elif name == "even_filter":
             # 过滤偶数策略：前区偏向奇数，偶数权重极低
             if n % 2 == 0:
                 w = 0.05  # 偶数几乎不选
@@ -126,7 +184,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
-        elif strategy == "statistical":
+        elif name == "statistical":
             # 统计分析策略：基于卡方检验和置信区间
             w = 1.0
             # 1. 卡方检验权重：偏离均匀分布的号码加权
@@ -155,7 +213,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w += 0.8
             elif miss > 10:  # 遗漏超过10期
                 w += 0.4
-        elif strategy == "prime_filter":
+        elif name == "prime_filter":
             # 过滤质数策略：前区压低质数权重，提升非质数权重
             _front_primes = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31}
             if n in _front_primes:
@@ -170,7 +228,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
-        elif strategy == "tail_filter":
+        elif name == "tail_filter":
             # 尾数过滤策略：前区按号码个位数差异化权重
             _front_tail_freq = Counter(n % 10 for d in data for n in d["front"])
             _top3_tails = {t for t, _ in _front_tail_freq.most_common(3)}
@@ -185,7 +243,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
-        elif strategy == "odd_even_balance_filter":
+        elif name == "odd_even_balance_filter":
             # 奇偶平衡过滤策略：压低过热的一类号码（奇数或偶数）
             # 统计前区奇偶频次
             _front_odd_freq = sum(1 for d in data for nn in d["front"] if nn % 2 == 1)
@@ -207,7 +265,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
-        elif strategy == "sum_filter":
+        elif name == "sum_filter":
             # 和值过滤策略：基于和值偏离理论中心的 z-score 压制大号或小号
             _FRONT_THEORY_CENTER = 90.0
             front_sums = [sum(d["front"]) for d in data]
@@ -234,7 +292,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
-        elif strategy == "zone_filter":
+        elif name == "zone_filter":
             # 区间段平衡过滤策略：前区 1-35 分 7 段（每段 5 号），段号=(n-1)//5
             # 段0={1..5}、段1={6..10}、...、段6={31..35}。统计最近 window 期
             # 各段累计出号频次，压制"过热段"（显著高于均匀期望）内所有号码权重到 0.5，
@@ -285,11 +343,11 @@ def compute_weights(draws, strategy="balanced", window=None):
 
     back_w = {}
     for n in range(BACK_MIN, BACK_MAX + 1):
-        if strategy == "hot":
+        if name == "hot":
             w = back_freq.get(n, 0) + 1
-        elif strategy == "cold":
+        elif name == "cold":
             w = back_last_seen.get(n, total) + 1
-        elif strategy == "statistical":
+        elif name == "statistical":
             # 统计分析策略：基于卡方检验和置信区间
             w = 1.0
             # 1. 卡方检验权重
@@ -318,7 +376,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w += 0.8
             elif miss > 8:  # 遗漏超过8期
                 w += 0.4
-        elif strategy == "prime_filter":
+        elif name == "prime_filter":
             # 过滤质数策略：后区压低质数权重，提升非质数权重
             _back_primes = {2, 3, 5, 7, 11}
             if n in _back_primes:
@@ -328,7 +386,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w = 1.0
                 if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
                     w += 1.5
-        elif strategy == "tail_filter":
+        elif name == "tail_filter":
             # 尾数过滤策略：后区按号码个位数差异化权重
             _back_tail_freq = Counter(n % 10 for d in data for n in d["back"])
             _top2_tails = {t for t, _ in _back_tail_freq.most_common(2)}
@@ -338,7 +396,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w = 1.0
                 if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
                     w += 1.5
-        elif strategy == "odd_even_balance_filter":
+        elif name == "odd_even_balance_filter":
             # 奇偶平衡过滤策略：压低过热的一类号码（奇数或偶数），前后区独立统计
             _back_odd_freq = sum(1 for d in data for nn in d["back"] if nn % 2 == 1)
             _back_even_freq = sum(1 for d in data for nn in d["back"] if nn % 2 == 0)
@@ -354,7 +412,7 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w = 1.0
                 if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
                     w += 1.5
-        elif strategy == "sum_filter":
+        elif name == "sum_filter":
             # 和值过滤策略：基于和值偏离理论中心的 z-score 压制大号或小号
             _BACK_THEORY_CENTER = 13.0
             back_sums = [sum(d["back"]) for d in data]
@@ -377,7 +435,7 @@ def compute_weights(draws, strategy="balanced", window=None):
             if w == 1.0:
                 if n in _back_hot:
                     w += 1.5
-        elif strategy == "zone_filter":
+        elif name == "zone_filter":
             # 区间段平衡过滤策略：后区 1-12 分 4 段（每段 3 号），段号=(n-1)//3
             # 段0={1..3}、段1={4..6}、段2={7..9}、段3={10..12}，与前区独立统计、对称设计。
             # 阈值与前区共用同一套（比值/绝对下限/z-score）：三者均为无量纲量
@@ -692,7 +750,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="候选生成与评分")
     parser.add_argument("--count", type=int, default=10, help="候选数量")
-    parser.add_argument("--strategy", default="balanced")
+    parser.add_argument("--strategy", default="balanced", help="策略：单个名称或用 + 组合多个（如 hot+tail_filter），未知策略名自动跳过")
     parser.add_argument("--pool-size", type=int, default=10000)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
