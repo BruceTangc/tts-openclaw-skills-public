@@ -170,6 +170,21 @@ def compute_weights(draws, strategy="balanced", window=None):
                     w += 1.0
                 if n in rising:
                     w += 0.5
+        elif strategy == "tail_filter":
+            # 尾数过滤策略：前区按号码个位数差异化权重
+            _front_tail_freq = Counter(n % 10 for d in data for n in d["front"])
+            _top3_tails = {t for t, _ in _front_tail_freq.most_common(3)}
+            if n % 10 in _top3_tails:
+                w = 0.05
+            else:
+                w = 1.0
+                if n in hot_front:
+                    w += 1.5
+                miss = front_last_seen.get(n, total)
+                if miss > 15:
+                    w += 1.0
+                if n in rising:
+                    w += 0.5
         else:  # balanced
             w = 1.0
             if n in hot_front:
@@ -223,6 +238,16 @@ def compute_weights(draws, strategy="balanced", window=None):
                 w = 0.05
             else:
                 # 非质数：保持热度加权逻辑（与平衡策略一致）
+                w = 1.0
+                if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
+                    w += 1.5
+        elif strategy == "tail_filter":
+            # 尾数过滤策略：后区按号码个位数差异化权重
+            _back_tail_freq = Counter(n % 10 for d in data for n in d["back"])
+            _top2_tails = {t for t, _ in _back_tail_freq.most_common(2)}
+            if n % 10 in _top2_tails:
+                w = 0.05
+            else:
                 w = 1.0
                 if n in [x for x, _ in Counter({k: back_freq.get(k, 0) for k in range(BACK_MIN, BACK_MAX + 1)}).most_common(4)]:
                     w += 1.5
