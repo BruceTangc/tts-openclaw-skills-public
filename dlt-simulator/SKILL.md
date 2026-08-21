@@ -100,6 +100,9 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generato
 
 # 使用和值过滤策略生成候选
 cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generator.py --count 10 --strategy sum_filter
+
+# 使用区间段平衡过滤策略生成候选
+cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 generator.py --count 10 --strategy zone_filter
 ```
 
 ### 模拟类
@@ -223,6 +226,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 | `tail_filter` | 尾数过滤策略：压低高频尾数权重、提升低频尾数权重 |
 | `odd_even_balance_filter` | 奇偶平衡过滤策略：压低过热奇/偶数权重、前后区独立统计 |
 | `sum_filter` | 和值过滤策略：基于历史 window 期开奖和值均值回归，压低偏离理论中心（前区90/后区13）方向的号码权重 |
+| `zone_filter` | 区间段平衡过滤策略：window 期各段频次统计，过热段（RATIO≥1.5 + GAP≥2.0 + Z≥1.0）内号码权重压到 0.5，实现段位均值回归，前后区独立统计、阈值共用 |
 
 ## 核心指标
 
