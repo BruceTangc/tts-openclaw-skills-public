@@ -213,6 +213,56 @@ def test_empty_draws():
     print("PASS: 空数据返回均匀权重")
 
 
+def test_front_out_of_range_ignored():
+    """前区越界号码（36 超上界 / 0 低出下界）不参与段统计：不崩溃，
+    结果与剔除越界号后的合法输入完全一致（越界号按脏数据处理）"""
+    draws = []
+    for i in range(30):
+        if i < 25:
+            front = [1, 2, 3, 4, 5]
+        else:
+            front = [6, 7, 8, 9, 10]
+        if i % 5 == 0:
+            front = [36, 0, 1, 2, 3]  # 含越界号：36 超上界、0 低出下界
+        draws.append({"front": front, "back": [1, 2]})
+    cleaned = [{"front": [n for n in d["front"] if FRONT_MIN <= n <= FRONT_MAX],
+                "back": d["back"]} for d in draws]
+    front_w, back_w = compute_weights(draws, strategy="zone_filter")
+    front_w_clean, back_w_clean = compute_weights(cleaned, strategy="zone_filter")
+    for n in range(FRONT_MIN, FRONT_MAX + 1):
+        assert front_w[n] == front_w_clean[n], \
+            f"前区 {n} 权重不一致: {front_w[n]} vs {front_w_clean[n]}"
+    for n in range(BACK_MIN, BACK_MAX + 1):
+        assert back_w[n] == back_w_clean[n], \
+            f"后区 {n} 权重不一致: {back_w[n]} vs {back_w_clean[n]}"
+    print("PASS: 前区越界号码(36/0)被忽略，不崩溃且结果与合法输入一致")
+
+
+def test_back_out_of_range_ignored():
+    """后区越界号码（13 超上界 / 0 低出下界）不参与段统计：不崩溃，
+    结果与剔除越界号后的合法输入完全一致（越界号按脏数据处理）"""
+    draws = []
+    for i in range(20):
+        if i < 18:
+            back = [1, 2]
+        else:
+            back = [3, 4]
+        if i % 5 == 0:
+            back = [13, 0]  # 含越界号：13 超上界、0 低出下界
+        draws.append({"front": [1, 2, 3, 4, 5], "back": back})
+    cleaned = [{"front": d["front"],
+                "back": [n for n in d["back"] if BACK_MIN <= n <= BACK_MAX]} for d in draws]
+    front_w, back_w = compute_weights(draws, strategy="zone_filter")
+    front_w_clean, back_w_clean = compute_weights(cleaned, strategy="zone_filter")
+    for n in range(FRONT_MIN, FRONT_MAX + 1):
+        assert front_w[n] == front_w_clean[n], \
+            f"前区 {n} 权重不一致: {front_w[n]} vs {front_w_clean[n]}"
+    for n in range(BACK_MIN, BACK_MAX + 1):
+        assert back_w[n] == back_w_clean[n], \
+            f"后区 {n} 权重不一致: {back_w[n]} vs {back_w_clean[n]}"
+    print("PASS: 后区越界号码(13/0)被忽略，不崩溃且结果与合法输入一致")
+
+
 def test_integration_generate():
     """集成：generate_top_candidates 正常出结果"""
     draws = _make_front_zone0_hot(50)
@@ -241,5 +291,7 @@ if __name__ == "__main__":
     test_window_degenerate()
     test_std_zero_all_segments_equal()
     test_empty_draws()
+    test_front_out_of_range_ignored()
+    test_back_out_of_range_ignored()
     test_integration_generate()
     print("\nAll zone_filter strategy tests passed!")

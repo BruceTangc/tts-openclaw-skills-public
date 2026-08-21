@@ -247,7 +247,8 @@ def compute_weights(draws, strategy="balanced", window=None):
             _front_zone_freq = [0] * _FRONT_ZONE_NUM
             for d in data:
                 for nn in d["front"]:
-                    _front_zone_freq[(nn - 1) // _FRONT_ZONE_SIZE] += 1
+                    if FRONT_MIN <= nn <= FRONT_MAX:  # 越界号码是脏数据：跳过，不参与段统计
+                        _front_zone_freq[(nn - 1) // _FRONT_ZONE_SIZE] += 1
             _front_zone_exp = FRONT_PICK * total / _FRONT_ZONE_NUM  # 均匀期望 = 5*window/7
             _front_zone_std = std(_front_zone_freq)                 # 样本标准差（common.std）
             _front_hot_zones = set()
@@ -392,7 +393,8 @@ def compute_weights(draws, strategy="balanced", window=None):
             _back_zone_freq = [0] * _BACK_ZONE_NUM
             for d in data:
                 for nn in d["back"]:
-                    _back_zone_freq[(nn - 1) // _BACK_ZONE_SIZE] += 1
+                    if BACK_MIN <= nn <= BACK_MAX:  # 越界号码是脏数据：跳过，不参与段统计
+                        _back_zone_freq[(nn - 1) // _BACK_ZONE_SIZE] += 1
             _back_zone_exp = BACK_PICK * total / _BACK_ZONE_NUM  # 均匀期望 = 2*window/4 = window/2
             _back_zone_std = std(_back_zone_freq)
             _back_hot_zones = set()
