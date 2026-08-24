@@ -20,6 +20,9 @@ BACK_MAX = cfg["back_max"]
 BACK_PICK = cfg["back_pick"]
 POOL_SIZE = cfg["candidate_pool_size"]
 MAX_FRONT_OVERLAP = cfg["max_front_overlap"]
+# 遗漏目标参数（可配置，默认值保持 20/10，与 3519810 行为一致）
+FRONT_OMISSION_TARGET = cfg.get("front_omission_target", 20)
+BACK_OMISSION_TARGET = cfg.get("back_omission_target", 10)
 
 
 def weighted_sample(pool_weights, k):
@@ -259,10 +262,11 @@ def score_candidate(front, back, draws, window=None, freq=None):
     back_miss = [back_last.get(n, total) for n in back]
     avg_front_miss = sum(front_miss) / len(front_miss) if front_miss else 0
     avg_back_miss = sum(back_miss) / len(back_miss) if back_miss else 0
-    # 遗漏10-30期为佳
+    # 遗漏10-30期为佳（目标值来自配置，默认 front=20 / back=10）
+    # 评分公式不变，仅把硬编码目标值改为可配置项
     scores["omission"] = round(
-        max(0, 1.0 - abs(avg_front_miss - 20) / 30) * 0.5 +
-        max(0, 1.0 - abs(avg_back_miss - 10) / 15) * 0.5, 4)
+        max(0, 1.0 - abs(avg_front_miss - FRONT_OMISSION_TARGET) / (FRONT_OMISSION_TARGET + 10)) * 0.5 +
+        max(0, 1.0 - abs(avg_back_miss - BACK_OMISSION_TARGET) / (BACK_OMISSION_TARGET + 5)) * 0.5, 4)
 
     # 3. 和值得分（70-130为佳）
     front_sum = sum(front)

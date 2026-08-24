@@ -216,6 +216,94 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 strategy
 
 ---
 
+## 统计严谨性澄清（Stat Rigor，2026-08-24 新增）
+
+本 Skill 在保留原选号模型（Hot/Cold/Trend/Balanced）不变的前提下，新增了统计验证能力。**务必区分三个概念**：
+
+### 1. theoretical probability（理论概率）
+
+大乐透静态理论概率，不随历史数据变化：
+- 前区单号：`5/35 = 14.2857%`
+- 后区单号：`2/12 = 16.6667%`
+- 完整组合（一等奖）：`1/21,425,712`
+
+大乐透理论上每个完整组合等概率，任何号码组合的概率完全相同。
+
+### 2. historical frequency（历史观察频率）
+
+历史实际开奖数据中号码的出现频率（如“号码08历史出现率 17.2%”）。
+**只能描述历史，不能称为下一期概率。**
+
+### 3. heuristic score（启发式评分）
+
+现有选号评分（frequency / omission / sum / odd_even / zone）。
+**heuristic score ≠ probability**——评分只是设计偏好，不代表中奖概率。
+
+### ⚠️ 明确边界
+
+- `hot / cold / trend / balanced` 全部是 **heuristic strategies**，不是概率模型。
+- `omission`（遗漏）是 heuristic factor，不代表“遗漏越久越容易开”。
+- 任何“冷号下一期概率更高 / 热号未来概率更高 / 趋势说明概率上升”都是错误的。
+- 不做自动机器学习预测（无 LSTM / Transformer / 神经网络 / 自动优化权重 / 自动寻优参数）。
+
+### ⚪ Random Baseline（新增）
+
+严格的大乐透均匀随机模型：
+- 前区从 1..35 均匀无放回取 5 个，后区从 1..12 均匀无放回取 2 个
+- **不用**历史频率 / 冷热 / 趋势 / 遗漏 / heuristic weight / 和值奇偶三区过滤
+
+现有 Balanced **不是** Random Baseline。Random 作为回测参照，用于回答“策略相对纯随机是否更好”。
+
+### 📊 统一评价指标（新增）
+
+所有策略共用同一评价函数：
+1. 平均前区命中数
+2. 平均后区命中数
+3. 前区 ≥3 命中率
+4. 前区 ≥4 命中率
+5. 前区 5 命中率
+6. 任意中奖概率（复用奖级判定）
+7. Top 2 表现
+8. Top 10 表现
+
+对每个策略计算 `delta = strategy_metric - random_metric`，
+并明确标注：**这是相对于随机基线的历史样本表现差异，不代表未来中奖概率提高。**
+
+### 🎯 稳定性分析口径
+
+保留原 Bootstrap-style Stability Analysis 命名，区间描述的是：
+**策略表现的样本稳定性**，而非大乐透真实中奖概率的置信区间。
+
+### 遗漏参数配置化（新增）
+
+原硬编码的遗漏目标已改为配置项（评分公式不变）：
+- `front_omission_target = 20`（默认）
+- `back_omission_target = 10`（默认）
+
+默认值保持原样，因此不启用 Random Baseline 时**原选号结果不变**。
+在 `config/config.json` 中修改即可生效。
+
+### 新增命令
+
+```bash
+# 理论概率
+python3 stat_rigor.py --theory
+
+# 生成严格随机组合
+python3 stat_rigor.py --random 10
+
+# 策略对比（含 Random Baseline + delta）
+python3 bootstrap.py --compare
+
+# 指定策略回测（可用 random）
+python3 bootstrap.py --strategy random
+
+# 统计增强测试
+python3 test_statistical_enhancement.py
+```
+
+---
+
 ## 修复记录（2026-08-20）
 
 对 dlt-simulator 做了一轮正确性修复（审计驱动 + 本地实测），未推倒重做：
