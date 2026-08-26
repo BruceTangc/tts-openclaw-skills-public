@@ -604,18 +604,11 @@ def cmd_order(args):
         print("ERR REJECTED: 交易数量必须 > 0，收到: %d" % qty)
         sys.exit(1)
     _is_sell = direction == "SELL"
-    _sellable_total = 0
-    if _is_sell:
-        _p = pos.get(args.code)
-        _sellable_total = _p.get("sellable", 0) if _p else 0
-    # BUY：必须整手。SELL：整手或整仓（等于全部可卖）均可。
-    _hundred_multiple = (qty % 100 == 0)
-    _whole_position_sell = _is_sell and (qty == _sellable_total)
-    if not (_hundred_multiple or _whole_position_sell):
-        if _is_sell:
-            print("ERR REJECTED: 卖出数量必须是 100 股整数倍或全部可卖持仓，收到: %d（可卖 %d）" % (qty, _sellable_total))
-        else:
-            print("ERR REJECTED: 买入数量必须是 100 股（一手）的整数倍，收到: %d" % qty)
+    # 统一数量约束（最终执行层，不信任上层 Agent 已检查）：
+    #   BUY 与 SELL 都必须为 100 股（一手）的整数倍。
+    #   不保留“SELL 整仓允许零股”之类的任何例外。
+    if qty % 100 != 0:
+        print("ERR REJECTED: %s 数量必须是 100 股（一手）的整数倍，收到: %d" % ("买入" if not _is_sell else "卖出", qty))
         sys.exit(1)
 
     is_market = args.type.upper() == "MARKET"
