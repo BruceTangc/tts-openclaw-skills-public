@@ -17,13 +17,13 @@ version: 2.0
 
 | 数据 | 工具 | API/路径 |
 |:----|:----|:-----|
-| 🇨🇳 A股行情 | mx-data skill（东方财富） | mkapi2.dfcfs.com |
+| 🇨🇳 A股行情 | mx-data skill（东方财富） | MX_MONI_API_HOST |
 | 🌍 全球行情 | qveris-official skill | qveris.ai/api/v1 |
-| 📰 新闻公告 | mx-search skill | mkapi2.dfcfs.com |
-| 🎯 选股 | mx-xuangu skill | mkapi2.dfcfs.com |
-| 📋 自选股管理 | mx-zixuan skill | mkapi2.dfcfs.com |
-| 💰 模拟盘操作 | mx-moni skill（组合9829979） | mkapi2.dfcfs.com |
-| ⚡ 集合竞价 | mx-data skill（优先） | mkapi2.dfcfs.com |
+| 📰 新闻公告 | mx-search skill | MX_MONI_API_HOST |
+| 🎯 选股 | mx-xuangu skill | MX_MONI_API_HOST |
+| 📋 自选股管理 | mx-zixuan skill | MX_MONI_API_HOST |
+| 💰 模拟盘操作 | mx-moni skill（组合{{MX_MONI_COMBO}}） | MX_MONI_API_HOST |
+| ⚡ 集合竞价 | mx-data skill（优先） | MX_MONI_API_HOST |
 | 🔍 交易日检查 | {{OPENCLAW_WORKSPACE}}/skills/A股交易员/scripts/is_trading_day.py | 本地脚本 |
 | 📝 记忆/日志/假设卡 | {{OPENCLAW_WORKSPACE}}/memory/hypothesis_cards/ | 本地文件 |
 | 🧠 策略进化 | 自建策略进化体系（假设卡 falsifier → RE_STUDY → 复盘三层 → 经验分层 → 规则生命周期，见「策略进化体系」章节）。**不依赖任何外部 self-improvement skill**，全部在巴菲特 workspace 内闭环 | 本地 |
