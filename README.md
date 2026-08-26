@@ -84,7 +84,6 @@ cd <skill-name> && npm install
 | Skill | 说明 |
 |:--|:--|
 | `A股长期投资组合经理/` | 巴菲特长期投资组合管理 V2.0（策略/逻辑文档，依赖私有 mx 系列接口） |
-| `A股短线交易员/` | 宝总 A股短线交易 V1.3（1-5日波段，独立模拟账户） |
-| `A股短线模拟账户/` | 宝总独立短线模拟账户 V1.1（含 sim_account.py） |
+| `A股短线交易系统/` | 宝总完整短线交易系统：`SKILL.md`(短线交易 V1.3) + `sim/`(独立模拟账户 V1.1, 含 sim_account.py) |
 
 > 注：本地绝对路径已替换为 `{{OPENCLAW_WORKSPACE}}` 占位符。巴菲特 skill 依赖私有 mx-data / mx-search / mx-moni 等接口，公开版仅供逻辑参考。

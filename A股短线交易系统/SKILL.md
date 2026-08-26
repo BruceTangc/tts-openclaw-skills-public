@@ -54,7 +54,7 @@ updates:
 > ⚠️ **脚本调用铁律（V1.4）**：禁止使用不存在的 shell 命令 / 禁止内联脚本。
 > - 查看文件 → `read` 工具或 `cat`；搜索 → `grep`。禁止 `show`、`search`、`ls -la` 等不存在或不适用的命令（Linux 没有 `show`）。
 > - **禁止 `python3 -c`、`node -e`、heredoc 内联脚本等内联写法**（模型易把换行转义成字面 `\n` 导致语法错误）。需要 Python 操作时，**必须先写脚本文件再执行**。
-> - 读账户/持仓/订单等数据一律用模拟账户 Skill 现成命令：`python3 {{OPENCLAW_WORKSPACE}}/skills/a-share-short-term-sim/sim_account.py status|positions|orders`，禁止直接 `python3 -c` 解析 `account.json`。
+> - 读账户/持仓/订单等数据一律用模拟账户 Skill 现成命令：`python3 {{OPENCLAW_WORKSPACE}}/A股短线交易系统/sim/sim_account.py status|positions|orders`，禁止直接 `python3 -c` 解析 `account.json`。
 
 ---
 
@@ -721,8 +721,8 @@ Cron 13：20:50 短线日终复盘
 - 生成次日观察重点。
 
 **Cron 13 复盘数据读取铁律（任何复盘类 Cron 都必须遵守）：**
-- ✅ 读账户状态/持仓/订单/成交/资金 → 一律用模拟账户现成命令：`python3 {{OPENCLAW_WORKSPACE}}/skills/a-share-short-term-sim/sim_account.py status|positions|orders|fills|cashflow`
-- ✅ 读当日快照 → `cat {{OPENCLAW_WORKSPACE}}/skills/a-share-short-term-sim/data/snapshots/YYYY-MM-DD.json`（snapshots 目录存在；日志在 logs/）
+- ✅ 读账户状态/持仓/订单/成交/资金 → 一律用模拟账户现成命令：`python3 {{OPENCLAW_WORKSPACE}}/A股短线交易系统/sim/sim_account.py status|positions|orders|fills|cashflow`
+- ✅ 读当日快照 → `cat {{OPENCLAW_WORKSPACE}}/A股短线交易系统/sim/data/snapshots/YYYY-MM-DD.json`（snapshots 目录存在；日志在 logs/）
 - ❌ **禁止** `show` 命令（Linux 无此命令）；**禁止**读取或引用 `data/daily_settle/` 路径 —— 该目录不存在，不是有效数据源。
 - ❌ **禁止** `search` 命令（Linux 无此命令）。查找 SKILL.md 里的章节用 `grep -n "关键词" <文件>` 或 `read <文件>`。
 - 复盘数据只来源于：sim_account.py 现成命令 + snapshots/ 快照 + logs/ 日志，不得臆造文件路径。
