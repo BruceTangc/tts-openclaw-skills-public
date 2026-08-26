@@ -53,6 +53,23 @@ TIF_VALUES = ("GTC", "IOC", "FOK")
 SESSIONS = ("AUCTION_AM", "CONTINUOUS", "AUCTION_PM", "AFTER_HOURS", "KLINE")
 DATA_GRADES = ("DATA_A", "DATA_B", "DATA_C", "DATA_INVALID", "DATA_CONFLICT")
 
+# ------------------------------------------------------------------
+# 运行模式语义（防止未来数据污染实时模拟）：
+#
+#   REALTIME（实时模拟）：AUCTION_AM / CONTINUOUS / AUCTION_PM / AFTER_HOURS
+#     只允许使用订单/撮合时点【当时已可获得】的数据（当前 tick 的 price 等）。
+#     禁止用当天（或未来）的 low/high/close 回填更早时点的成交。
+#
+#   KLINE = HISTORICAL_REPLAY（历史回放）：
+#     仅对【已经走完】的时段/K线成立，允许用完整 K 线的 low/high 判断
+#     该时段内订单是否曾触达价格。这是事后回放，不是实时模拟，
+#     也不得与实时盘中混用去凭空制造未来成交。
+#
+#   判定标准：若一笔成交的时间戳早于其 K 线时段结束时间，但成交价格
+#   依据了该时段收盘后才确定的 low/high，即为未来函数，禁止。
+# ------------------------------------------------------------------
+HISTORICAL_REPLAY_SESSION = "KLINE"   # 该会话 = 历史回放模式
+
 
 def load_config():
     cfg = dict(DEFAULT_CONFIG)
@@ -347,7 +364,8 @@ def update_position_fill(pos, code, direction, qty, price, fees, ts, model):
         p["realized_gross"] = _money(p["realized_gross"] + gross)
         p["realized_net"] = _money(p["realized_net"] + net)
         p["total"] -= qty
-        p["sellable"] -= qty
+        # 成交只减少 total 与 frozen_qty：sellable 在卖单冻结时已扣减，这里不再重复扣。
+        # 账务恒等式 total = sellable + today_buy_qty + frozen_qty 天然成立。
         p["frozen_qty"] = max(0, p.get("frozen_qty", 0) - qty)
         p["last_sell_time"] = ts
         if p["total"] > 0:
@@ -381,11 +399,21 @@ def apply_fill(acc, pos, order, qty, price, basis, model="", src=""):
     acc["total_fees"] = _money(acc["total_fees"] + fees)
 
     if side == "BUY":
-        # 下单时已把成交金额从 cash 冻结到 frozen，成交时只扣费用 + 解冻金额转持仓
-        acc["cash"] = _money(acc["cash"] - fees)
-        acc["frozen"] = max(0.0, _money(acc["frozen"] - amount))
+        # 下单时已按委托价冻结资金（qty*委托价）。
+        # 成交时：实际成交额 = qty*成交价；解冻本笔对应的委托冻结额；
+        #   委托冻结额 - 实际成交额的差额释放回 cash，避免留下永久 frozen。
+        #   部分成交时只解冻/释放本笔成交对应的部分，剩余未成交订单冻结继续保留。
+        frozen_price = order.get("price", price)  # 下单时冻结所用的单价（委托价/市价基准价）
+        frozen_for_fill = _money(qty * frozen_price)   # 本笔成交对应的委托冻结额
+        amount = _money(qty * price)                    # 本笔成交实际成交额
+        refund_diff = _money(frozen_for_fill - amount)  # 多冻结差额 → 释放回 cash
+        acc["cash"] = _money(acc["cash"] - fees + refund_diff)
+        acc["frozen"] = max(0.0, _money(acc["frozen"] - frozen_for_fill))
         add_cashflow(acc, "TRADE_SETTLEMENT", order["code"], -amount,
                      "买入 %sx%d@%.2f" % (order["code"], qty, price))
+        if refund_diff > 0:
+            add_cashflow(acc, "UNFREEZE_DIFF", order["code"], refund_diff,
+                         "释放多冻结金额 %.2f" % refund_diff)
         if fees > 0:
             add_cashflow(acc, "FEE", order["code"], -fees, "买入费用 佣%.2f/印%.2f/过%.2f" % (
                 detail["commission"], detail["stamp_tax"], detail["transfer_fee"]))
@@ -559,7 +587,37 @@ def cmd_order(args):
                 print("IDEMPOTENT 幂等命中: 订单 %s 状态=%s（未重复下单）" % (o["order_id"], o["status"]))
                 return o["order_id"]
 
-    qty = int(args.qty)
+    qty = args.qty
+    # 交易数量硬校验（最终执行层，不信任上层 Agent 已检查）：
+    #   BUY：qty 必须为正整数，且为 100 股（一人手）的整数倍。
+    #   SELL：允许 100 股整数倍，或等于全部可卖持仓（整仓卖出含零股）。
+    #   错误数量必须在创建订单/修改资金/持仓/冻结之前 REJECT，不产生任何状态变化。
+    try:
+        qty_str = str(qty).strip()
+        if not qty_str.lstrip('-').isdigit() or '.' in qty_str:
+            raise ValueError
+        qty = int(qty)
+    except (ValueError, TypeError):
+        print("ERR REJECTED: 交易数量必须为正整数（手），收到非法值: %r" % (args.qty,))
+        sys.exit(1)
+    if qty <= 0:
+        print("ERR REJECTED: 交易数量必须 > 0，收到: %d" % qty)
+        sys.exit(1)
+    _is_sell = direction == "SELL"
+    _sellable_total = 0
+    if _is_sell:
+        _p = pos.get(args.code)
+        _sellable_total = _p.get("sellable", 0) if _p else 0
+    # BUY：必须整手。SELL：整手或整仓（等于全部可卖）均可。
+    _hundred_multiple = (qty % 100 == 0)
+    _whole_position_sell = _is_sell and (qty == _sellable_total)
+    if not (_hundred_multiple or _whole_position_sell):
+        if _is_sell:
+            print("ERR REJECTED: 卖出数量必须是 100 股整数倍或全部可卖持仓，收到: %d（可卖 %d）" % (qty, _sellable_total))
+        else:
+            print("ERR REJECTED: 买入数量必须是 100 股（一手）的整数倍，收到: %d" % qty)
+        sys.exit(1)
+
     is_market = args.type.upper() == "MARKET"
 
     q = mkt.get(args.code, {})
@@ -584,6 +642,19 @@ def cmd_order(args):
             sys.exit(1)
         price = float(args.price)
 
+    # 价格硬校验：必须 > 0，且不能是 NaN / Infinity / 非法数值。
+    # 在创建订单/修改任何账户状态之前 REJECT。
+    try:
+        if not (price > 0):
+            raise ValueError
+        if price != price:  # NaN
+            raise ValueError
+        if price in (float('inf'), float('-inf')):
+            raise ValueError
+    except (ValueError, TypeError, OverflowError):
+        print("ERR REJECTED: 非法价格: %r（必须为 >0 的有限数值）" % (args.price,))
+        sys.exit(1)
+
     if direction == "BUY":
         ok, reason = risk_check_new_buy(acc, pos, mkt, args.code, qty, price, args.topic)
         if not ok:
@@ -604,6 +675,9 @@ def cmd_order(args):
             print("ERR REJECTED: 可卖数量不足 (可卖%d, 当日买入%d 需次日可卖)" % (sellable, today_buy))
             sys.exit(1)
         if p:
+            # 卖单冻结：从 sellable 扣减可卖数量，转入 frozen_qty。
+            # 账务恒等式 total = sellable + today_buy_qty + frozen_qty 天然成立。
+            p["sellable"] = p.get("sellable", 0) - qty
             p["frozen_qty"] = p.get("frozen_qty", 0) + qty
         log("POSITION", "freeze-sell", "", "%d" % qty, "下单冻结持仓", "order")
 
@@ -684,7 +758,10 @@ def _cancel_order(oid, reason, acc=None, pos=None, orders=None):
             else:
                 p = pos.get(o["code"])
                 if p:
+                    # 撤单/部分撤单：把剩余冻结数量从 frozen_qty 转回 sellable。
+                    # 保持恒等式 total = sellable + today_buy_qty + frozen_qty 天然成立。
                     p["frozen_qty"] = max(0, p.get("frozen_qty", 0) - remaining)
+                    p["sellable"] = p.get("sellable", 0) + remaining
                 log("POSITION", "unfreeze-sell", "", "%d" % remaining, reason, "cancel")
             o["status"] = "CANCELLED"
             o["reject_reason"] = reason
