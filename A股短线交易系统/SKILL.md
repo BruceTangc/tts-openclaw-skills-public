@@ -51,7 +51,7 @@ updates:
 
 如已有执行脚本，优先复用，但必须以本 Skill 的短线规则为准。
 
-> ⚠️ **脚本调用铁律（V1.4）**：禁止使用不存在的 shell 命令 / 禁止内联脚本。
+> ⚠️ **脚本调用铁律（V1.3）**：禁止使用不存在的 shell 命令 / 禁止内联脚本。
 > - 查看文件 → `read` 工具或 `cat`；搜索 → `grep`。禁止 `show`、`search`、`ls -la` 等不存在或不适用的命令（Linux 没有 `show`）。
 > - **禁止 `python3 -c`、`node -e`、heredoc 内联脚本等内联写法**（模型易把换行转义成字面 `\n` 导致语法错误）。需要 Python 操作时，**必须先写脚本文件再执行**。
 > - 读账户/持仓/订单等数据一律用模拟账户 Skill 现成命令：`python3 {{OPENCLAW_WORKSPACE}}/A股短线交易系统/sim/sim_account.py status|positions|orders`，禁止直接 `python3 -c` 解析 `account.json`。
@@ -994,7 +994,7 @@ D级：
 
 | 数据源 | 位置 | 用途 |
 |:--|:--|:--|
-| 候选池分级 | `{{OPENCLAW_WORKSPACE}}/skills/a-share-short-term-trader/data/watchlist.json` | 候选/核心/前排股的观察轨迹 |
+| 候选池分级 | `{{OPENCLAW_WORKSPACE}}/A股短线交易系统/data/watchlist.json` | 候选/核心/前排股的观察轨迹 |
 | 交易复盘 | 每日复盘报告（#29） | 逐笔买卖的成败记录 |
 | 选股复盘 | 每日复盘报告（#28） | 选股命中率与错过的机会 |
 | 策略统计 | 周度统计（#30） | 各模型在各市场环境下的胜率/盈亏比/回撤 |

@@ -627,13 +627,26 @@ def cmd_order(args):
     save_positions(pos)
     log("ORDER", oid, "", "%s %s %dx%.2f" % (direction, args.code, qty, price), "", "order")
 
-    # 市价单：立即按最新价成交（无需等待后续 tick / 无需盯盘）
+    # 市价单：立即按最新可得价成交（无需等待后续 tick / 无需盯盘）。
+    # 成交前仍必须通过统一的有效性检查，不能绕过涨跌停封单排队/停牌/数据等级等硬约束。
+    # 这里显式用 CONTINUOUS 会话语义做检查，该分支已覆盖：
+    #   涨停封单排队(seal_qty)、跌停封单排队(seal_qty)、停牌、数据无效/冲突、无最新价。
+    # 市价单语义不变：只要最新价有效且非封死/不可成交，即按该最新价成交。
+    # （price 已设为最新价，_order_can_fill 里 price<=order.price 恒成立，不会因限价条件误拒。）
     if is_market:
-        apply_fill(acc, pos, order, qty, price, "MARKET_FILL", order.get("model", ""), "market")
+        fillable, fprice, reason = _order_can_fill(order, q, "CONTINUOUS")
+        if not fillable:
+            _cancel_order(oid, "市价单成交前检查未通过: %s" % reason, acc, pos, orders)
+            save_positions(pos)
+            save_orders(orders)
+            save_account(acc)
+            print("ERR 市价单 %s 被拒: %s（未成交，已撤销）" % (oid, reason))
+            return oid
+        apply_fill(acc, pos, order, qty, fprice, "MARKET_FILL", order.get("model", ""), "market")
         save_positions(pos)
         save_orders(orders)
         save_account(acc)
-        print("OK 市价单 %s 立即成交 %s %s %d股 @%.2f" % (oid, direction, args.code, qty, price))
+        print("OK 市价单 %s 立即成交 %s %s %d股 @%.2f" % (oid, direction, args.code, qty, fprice))
         return oid
 
     if order["tif"] in ("IOC", "FOK"):
