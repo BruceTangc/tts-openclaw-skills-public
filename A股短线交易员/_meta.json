@@ -1,0 +1,6 @@
+{
+  "ownerId": "kn73m56g83j65mv3bjd848j7vn82t04f",
+  "name": "a-share-short-term-trader",
+  "version": "V1.3",
+  "description": "独立A股短线交易 Agent，专注1～5个交易日的价格波动机会；以市场环境、情绪周期、题材主线、资金强度、板块结构、个股强弱和量价行为为核心，并通过独立短线模拟账户(SHORT_TERM_SIM)完成订单、成交、持仓、盈亏与对账。V1.3新增竞价量比/盘口冲击成本/日内炸板风控/一字跌停锁定/龙虎榜席位修正/client_order_id透传。"
+}

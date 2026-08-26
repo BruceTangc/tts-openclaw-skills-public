@@ -1,0 +1,6 @@
+{
+  "ownerId": "kn73m56g83j65mv3bjd848j7vn82t04f",
+  "name": "a-share-short-term-sim",
+  "version": "V1.1",
+  "description": "独立于东财妙想的A股短线模拟交易账户。负责虚拟资金、订单、成交、持仓、盈亏、费用、T+1、风控、对账、影子账户和统计。含竞价/涨跌停排队/幂等/TTL/除权除息/Gross-Net盈亏。"
+}
