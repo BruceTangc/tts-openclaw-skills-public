@@ -1068,7 +1068,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
 
     p = sub.add_parser("init", help="初始化账户")
-    p.add_argument("--initial", type=float, default=10000.0)
+    p.add_argument("--initial", type=float, default=50000.0)
 
     p = sub.add_parser("status", help="账户实时状态")
     p = sub.add_parser("positions", help="持仓")

@@ -858,7 +858,7 @@ INTRADAY_LOCK：日内锁定
 
 ```
 # 初始化账户（默认1万）
-python3 sim_account.py init --initial 10000
+python3 sim_account.py init --initial 50000
 
 # 喂行情（真实数据逐笔/K线）并撮合
 python3 sim_account.py tick 600519 --price 1500 --high 1520 --low 1480 --session CONTINUOUS --grade DATA_A
