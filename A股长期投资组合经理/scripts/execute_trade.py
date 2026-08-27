@@ -36,14 +36,20 @@ from datetime import datetime, date
 BASE_DIR = os.path.expanduser("{{OPENCLAW_WORKSPACE}}")
 STATE_PATH = os.path.join(BASE_DIR, "state.json")
 LOCK_PATH = os.path.join(BASE_DIR, ".risk_control.lock")  # 统一锁文件
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPTS_DIR)
+
+# F3 / F4：统一 BUY Gate + 交易意图幂等（本脚本所有 BUY 路径必须经此）
+import buy_gate
+import trade_intent
 MX_MONI = os.path.join(BASE_DIR, "skills/mx-moni/mx_moni.py")
-MX_API_URL = "MX_MONI_API_BASE"
+MX_API_URL = "{{MX_MONI_API_BASE}}"
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 HYPOTHESIS_DIR = os.path.join(BASE_DIR, "memory", "hypothesis_cards")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 POLL_INTERVAL = 300
-FEISHU_USER = "ou_XXX_PLACEHOLDER"
+FEISHU_USER = "{{FEISHU_USER_OPENID}}"
 INIT_CAPITAL = 200000
 
 
@@ -148,7 +154,7 @@ def get_feishu_token():
             cfg = json.load(f)
         fs = cfg.get('channels', {}).get('feishu', {})
         app_id, app_secret = fs.get('appId', ''), fs.get('appSecret', '')
-        r = requests.post("https://FEISHU_API_BASE/open-apis/auth/v3/tenant_access_token/internal",
+        r = requests.post("{{FEISHU_API_BASE}}/open-apis/auth/v3/tenant_access_token/internal",
                           json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
         return r.json().get('tenant_access_token', '')
     except:
@@ -164,7 +170,7 @@ def push_feishu(token, title, body_text):
     try:
         content = json.dumps({"zh_cn": {"title": title, "content": [[{"tag": "text", "text": body_text}]]}})
         payload = json.dumps({"receive_id": FEISHU_USER, "msg_type": "post", "content": content})
-        requests.post("https://FEISHU_API_BASE/open-apis/im/v1/messages?receive_id_type=open_id",
+        requests.post("{{FEISHU_API_BASE}}/open-apis/im/v1/messages?receive_id_type=open_id",
                       headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                       data=payload, timeout=10)
     except:
@@ -188,7 +194,7 @@ def get_fs_token_cached():
             # 跳过被脱敏的 secret（含 * 号表示已脱敏）
             if app_secret and '*' not in app_secret and app_id:
                 r = requests.post(
-                    "https://FEISHU_API_BASE/open-apis/auth/v3/tenant_access_token/internal",
+                    "{{FEISHU_API_BASE}}/open-apis/auth/v3/tenant_access_token/internal",
                     json={"app_id": app_id, "app_secret": app_secret}, timeout=10
                 )
                 d = r.json()
@@ -199,17 +205,40 @@ def get_fs_token_cached():
     return _global_fs_token or ""
 
 
+# 标记：mx_moni 调用超时（执行结果未知）。用于幂等——timeout 不能直接重试 BUY。
+class _CallTimeout:
+    _instance = None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    def __repr__(self):
+        return "<CALL_TIMEOUT>"
+
+CALL_TIMEOUT = _CallTimeout()
+
+
 def call_mx_moni(query, timeout=30):
-    """调用 mx_moni.py（带重试）"""
+    """调用 mx_moni.py（带重试）。
+    返回：
+      - 成功 -> stdout 字符串
+      - 3 次重试均超时 -> CALL_TIMEOUT 哨兵（结果未知，严禁当作确定失败/成功）
+      - 确定失败（非超时异常/空输出） -> ""
+    """
     cmd = [sys.executable, MX_MONI, query]
+    all_timeout = True
     for attempt in range(3):
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            all_timeout = False
             return r.stdout
         except subprocess.TimeoutExpired:
             if attempt < 2: time.sleep(3 * (attempt + 1))
         except Exception as e:
+            all_timeout = False
             if attempt < 2: time.sleep(2)
+    if all_timeout:
+        return CALL_TIMEOUT
     return ""
 
 
@@ -268,22 +297,10 @@ def check_circuit_breaker(state):
 
 
 def check_hypothesis_card(code):
-    """V2.0: 检查投资假设卡是否存在及生命周期是否允许买入。
-    软检查：无卡时告警但不阻止（系统初期可能尚未建立所有假设卡）。
-    返回 (ok: bool, msg: str)"""
-    code = zfill_code(code)
-    card_path = os.path.join(HYPOTHESIS_DIR, f"{code}.json")
-    if not os.path.exists(card_path):
-        return True, f"⚠️ V2.0: {code} 无投资假设卡，建议 Cron 7 创建后再加仓"
-    try:
-        with open(card_path) as f:
-            card = json.load(f)
-        lifecycle = card.get('lifecycle', 'UNKNOWN')
-        if lifecycle not in ('BUILD', 'HOLD', 'START'):
-            return True, f"⚠️ {code} 生命周期={lifecycle}，不在允许买入状态，建议确认"
-        return True, f"✅ {code} 假设卡有效，生命周期={lifecycle}"
-    except Exception as e:
-        return True, f"⚠️ {code} 假设卡读取失败: {e}"
+    """F4: 假设卡一票否决（真拒绝）。委托给 buy_gate 的严格校验。
+    卡不存在 / 无效 / 必要字段缺失 / 过期 / 风险字段缺失 / 生命周期不允许 -> DENY。"""
+    ok, msg = buy_gate.check_hypothesis_card(code, strict=True)
+    return ok, msg
 
 
 def check_risk(trade_type, code, price, quantity, is_market):
@@ -373,6 +390,12 @@ def execute_trade(trade_type, code, price, quantity):
             quantity = max_sell
 
     output = call_mx_moni(query)
+    # 超时：执行结果未知（可能已下单，也可能未下单）——必须标 UNKNOWN，严禁当作确定结果
+    if output is CALL_TIMEOUT:
+        return {"status": "timeout", "code": code, "type": trade_type,
+                "quantity": quantity, "price": price, "order_id": None,
+                "output": "", "message": "mx_moni 调用超时，执行结果未知"}
+    output = output or ""
     order_id = None
     m = re.search(r'委托编号[：:\s]*(\S+)', output)
     if m:
@@ -458,6 +481,123 @@ def daemonize():
 
 # ===== 主执行 =====
 
+def run_buy_guarded(code, price_str, quantity, background):
+    """
+    F3+F2+F4：统一 BUY 入口。所有能进入 BUY 的路径（signal/watch/cron/manual）最终都落到这里。
+
+    调用链：
+      run()/其他入口 ──> run_buy_guarded
+        ├─> trade_intent.create_intent()   （建 PENDING 意图 + 幂等去重）
+        ├─> buy_gate.buy_gate_decide()     （统一 BUY Gate：交易日/时间/假设卡/风控/仓位/幂等）
+        ├─> trade_intent.mark_running()    （PENDING->EXECUTING）
+        ├─> execute_trade()                （真正下单）
+        └─> trade_intent.settle_intent()   （EXECUTING->EXECUTED/FAILED/REJECTED/UNKNOWN）
+
+    幂等保证：
+      - 相同 trade_intent_id 重复进入时，create_intent 直接返回既有状态；
+      - UNKNOWN 状态严禁直接重试 BUY，必须先 query_unknown_before_retry 查执行结果。
+    """
+    try:
+        # 0) 创建/去重交易意图（PENDING）
+        opts_gate = {"source": "execute_trade"}
+        intent_id, intent_state = trade_intent.create_intent(
+            code, "buy", quantity,
+            source=opts_gate["source"],
+            intent_id=None,  # 每次 BUY 自动生成唯一 trade_intent_id
+        )
+        opts_gate["intent_id"] = intent_id
+
+        # 若已存在且非 PENDING：幂等拦截（不得重复 BUY）
+        if intent_state != trade_intent.PENDING:
+            reason = f"BUY 被幂等拦截：意图 {intent_id} 状态={intent_state}"
+            logging.warning(reason)
+            if background:
+                push_feishu(get_fs_token_cached(), "🛡️ 幂等拦截", reason)
+            return None
+
+        # 1) 统一 BUY Gate
+        decision = buy_gate.buy_gate_decide(code, quantity, intent_id, opts_gate)
+        if not decision["allowed"]:
+            reason = decision["reason"]
+            logging.error(reason)
+            trade_intent.settle_intent(intent_id, trade_intent.REJECTED, message=reason)
+            if background:
+                push_feishu(get_fs_token_cached(), "❌ BUY Gate 拒绝", reason)
+            return None
+        gate_pass_info = decision["gate_pass_info"]
+        logging.info(f"BUY Gate 通过: {gate_pass_info}")
+
+        # 2) 二次校验：实时涨幅 >4% 放弃（保留 V2.0 防突变逻辑）
+        current_pct = get_current_change_pct(code)
+        if current_pct is not None and current_pct > 4:
+            reason = f"❌ 涨幅{current_pct:.1f}%>4%，自动放弃买入（二次校验拦截）"
+            logging.warning(reason)
+            trade_intent.settle_intent(intent_id, trade_intent.REJECTED, message=reason)
+            if background:
+                push_feishu(get_fs_token_cached(), f"❌ 涨幅超限: {code}", reason)
+            return None
+
+        # 3) PENDING -> EXECUTING（标记开始执行，防重复进入）
+        ok, entry = trade_intent.mark_running(intent_id, gate_pass_info=gate_pass_info)
+        if not ok:
+            st = entry.get("state") if isinstance(entry, dict) else None
+            reason = f"BUY 已被占用（状态={st}），禁止重复执行"
+            logging.warning(reason)
+            if background:
+                push_feishu(get_fs_token_cached(), "🛡️ 幂等拦截", reason)
+            return None
+
+        # 4) 真正下单（市价单；若执行超时/异常，交由 UNKNOWN 处理）
+        result = execute_trade("buy", code, price_str, quantity)
+        status = result.get("status", "unknown")
+        order_id = result.get("order_id")
+
+        # 4.1) 超时：执行结果未知。严禁直接重试，必须 UNKNOWN 后 query_unknown_before_retry
+        if status == "timeout":
+            msg = (f"⏱ BUY 调用超时，结果未知，状态置 UNKNOWN\n"
+                   f"   必须先查询执行结果（intent retry-query）再决定是否重试")
+            logging.error(msg)
+            trade_intent.settle_intent(intent_id, trade_intent.UNKNOWN,
+                                       order_id=order_id, message=msg)
+            if background:
+                push_feishu(get_fs_token_cached(), "⏱ BUY UNKNOWN（需查结果）", msg)
+            return None
+
+        if status == "failed":
+            msg = f"❌ 下单失败: {result.get('message') or result.get('output', '')}"
+            logging.error(msg)
+            trade_intent.settle_intent(intent_id, trade_intent.FAILED, order_id=order_id, message=msg)
+            if background:
+                push_feishu(get_fs_token_cached(), "❌ 交易失败", msg)
+            return None
+
+        # 5) 成交确认后 EXECUTING -> EXECUTED（仅在确认成交/提交成功后标记，避免漏单）
+        trade_intent.settle_intent(intent_id, trade_intent.EXECUTED,
+                                   order_id=order_id, message=result.get("output", "")[:200])
+        final_msg = f"✅ BUY 已完成 | {code} | {quantity}股 | 委托 {order_id or 'N/A'}"
+        logging.info(final_msg)
+        if background:
+            push_feishu(get_fs_token_cached(), f"💰 交易结果: {code}", final_msg)
+        return result
+    except trade_intent.IntentLockError as e:
+        msg = f"❌ 意图状态锁异常，BUY 未执行（fail-closed）: {e}"
+        logging.error(msg)
+        if background:
+            push_feishu(get_fs_token_cached(), "❌ BUY 未执行", msg)
+        return None
+    except Exception as e:
+        # 未知异常：绝不能盲目重试 BUY。标记 UNKNOWN（必须查结果后再决定）。
+        msg = f"⚠️ BUY 执行异常，状态置 UNKNOWN（需查执行结果再决定）: {e}"
+        logging.error(msg)
+        try:
+            trade_intent.mark_unknown_if_stale(intent_id)
+        except Exception:
+            pass
+        if background:
+            push_feishu(get_fs_token_cached(), "⚠️ BUY UNKNOWN", msg)
+        return None
+
+
 def run(trade_type, code, price_str, quantity, background):
     setup_log(f"{trade_type}_{code}")
     code = zfill_code(code)
@@ -472,16 +612,20 @@ def run(trade_type, code, price_str, quantity, background):
 
     logging.info(f"执行{'买入' if trade_type == 'buy' else '卖出'} {code} {'市价' if is_market else price_str} {quantity}股")
 
-    # 买入时间窗口检查
+    # ===== F3+F2+F4: 所有 BUY 必须经统一 BUY Gate + 意图幂等 =====
     if trade_type == 'buy':
-        now = datetime.now()
-        if not (now.hour == 14 and 45 <= now.minute <= 50):
-            msg = f"买入时间窗口外（当前{now.strftime('%H:%M')}），仅限14:45-14:50"
-            logging.error(msg)
-            if background:
-                push_feishu(get_fs_token_cached(), "❌ 时间窗口外", msg)
+        guarded = run_buy_guarded(code, price_str, quantity, background)
+        if background:
+            # 后台模式：结果已由 run_buy_guarded 推送飞书，主进程可直接结束
             return
+        if guarded is None:
+            # 被拒/失败，run_buy_guarded 已推送并记录意图
+            return
+        # 前台模式把 guarded 结果作为交易 result 继续尾盘闭环（限价旧逻辑），
+        # 但 V2.0 市价单下无需尾盘轮询，直接输出即可
+        return
 
+    # ===== 卖出路径（不经过 BUY Gate；卖出仍保留时间/风控/仓位检查） =====
     ok, reason = check_risk(trade_type, code, price_str, quantity, is_market)
     if not ok:
         msg = f"❌ 风险检查未通过: {reason}"
@@ -489,23 +633,6 @@ def run(trade_type, code, price_str, quantity, background):
         if background:
             push_feishu(get_fs_token_cached(), "❌ 交易被风控拦截", msg)
         return
-
-    # V2.0: 买入前投资假设卡检查（软检查，告警但不阻止）
-    if trade_type == 'buy':
-        card_ok, card_msg = check_hypothesis_card(code)
-        logging.info(f"投资假设卡检查: {card_msg}")
-
-    # 买入前二次校验：实时查涨幅，>4% 放弃（防止 14:30→14:45 价格突变）
-    if trade_type == 'buy':
-        current_pct = get_current_change_pct(code)
-        if current_pct is not None and current_pct > 4:
-            msg = f"❌ 涨幅{current_pct:.1f}%>4%，自动放弃买入（二次校验拦截）"
-            logging.warning(msg)
-            if background:
-                push_feishu(get_fs_token_cached(), f"❌ 涨幅超限: {code}", msg)
-            return
-        elif current_pct is not None:
-            logging.info(f"二次校验: {code} 当前涨幅{current_pct:.1f}%，通过")
 
     result = execute_trade(trade_type, code, price_str, quantity)
     if result['status'] == 'failed':
@@ -603,10 +730,19 @@ def watch_price(code, target_price, direction, quantity, deadline_str=None):
             logging.info(f"✅ 触发卖出！现价 {price:.2f} ≥ 目标 {target_price:.2f}")
 
         if triggered:
-            # 市价执行
-            result = call_mx_moni(f"{'市价买入' if direction == 'buy' else '市价卖出'} {code} {quantity}")
+            if direction == 'buy':
+                # F2: watch 不具备独立 BUY 能力——降级为只提示，不实际下单。
+                # BUY 只能经统一 BUY Gate（run_buy_guarded / 14:45 cron）执行，watch 禁止绕过风控。
+                msg = (f"🔔 盯盘提醒（仅提示，不自动买入）| {code} | 现价 {price:.2f} ≤ 目标 {target_price:.2f}\n"
+                       f"   如需建仓，请走统一 BUY Gate（14:45 cron 二次验价后执行）")
+                logging.info(msg)
+                push_feishu(get_fs_token_cached(), f"🔔 盯盘提示: {code}", msg)
+                return {"status": "alert_only", "code": code, "price": price, "quantity": quantity,
+                        "direction": "buy", "note": "watch BUY 已降级为只提示，禁止绕过 BUY Gate 下单"}
+            # SELL：维持原盯盘执行（卖出不受 BUY Gate 约束）
+            result = call_mx_moni(f"市价卖出 {code} {quantity}")
             if '失败' not in result:
-                msg = f"✅ 触发成功 | {code} | {'买入' if direction == 'buy' else '卖出'} {quantity}股 | 触发价 {price:.2f}"
+                msg = f"✅ 触发成功 | {code} | 卖出 {quantity}股 | 触发价 {price:.2f}"
                 logging.info(msg)
                 push_feishu(get_fs_token_cached(), f"💰 盯盘触发: {code}", msg)
                 return {"status": "triggered", "code": code, "price": price, "quantity": quantity}
@@ -722,6 +858,34 @@ def main():
                 return
             sys.stdout = open(os.devnull, 'w'); sys.stderr = open(os.devnull, 'w')
         run(cmd, code, price_str, quantity, background)
+        return
+    if cmd in ('trade-intent', 'intent'):
+        # 幂等状态排查/UNKNOWN 处理（无交易）：
+        #   python3 execute_trade.py intent status
+        #   python3 execute_trade.py intent get <intent_id>
+        #   python3 execute_trade.py intent list
+        #   python3 execute_trade.py intent retry-query <intent_id> <filled|not-filled> [--order-id XXX]
+        if not args:
+            print("用法: intent {status|list|get <id>|retry-query <id> <filled|not-filled> [--order-id X]}")
+            return
+        sub = args[0]
+        if sub == 'status':
+            trade_intent.intent_status()
+        elif sub == 'list':
+            for e in trade_intent.list_intents():
+                print(f"{e.get('intent_id')} | {e.get('code')} | {e.get('state')} | {e.get('created_at')} | {e.get('message')}")
+        elif sub == 'get' and len(args) >= 2:
+            print(json.dumps(trade_intent.get_intent(args[1]), ensure_ascii=False, indent=2))
+        elif sub == 'retry-query' and len(args) >= 3:
+            iid, verdict = args[1], args[2]
+            oid = None
+            if '--order-id' in args:
+                oid = args[args.index('--order-id') + 1]
+            filled = verdict == 'filled'
+            ok, entry = trade_intent.resolve_unknown(iid, filled, order_id=oid)
+            print(json.dumps({"ok": ok, "entry": entry}, ensure_ascii=False, indent=2))
+        else:
+            print("未知 intent 子命令")
         return
     print(f"❌ 未知命令: {cmd}")
 
