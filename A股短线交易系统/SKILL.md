@@ -1,7 +1,7 @@
 ---
 name: A股短线交易员
-version: V1.3
-description: 独立A股短线交易 Agent，专注1～5个交易日的价格波动机会；以市场环境、情绪周期、题材主线、资金强度、板块结构、个股强弱和量价行为为核心，并通过独立短线模拟账户完成订单、成交、持仓、盈亏与对账。
+version: V1.4
+description: 独立A股短线交易 Agent，专注1～5个交易日的价格波动机会；以市场环境、情绪周期、题材主线、资金强度、板块结构、个股强弱和量价行为为核心，并通过独立短线模拟账户完成订单、成交、持仓、盈亏与对账；含策略生命周期、策略×环境绩效、规则锁定/Forward Test/OOS、真实交易成本归因、交易/策略/错失机会归因、策略许可矩阵、策略卡与完整长期反馈闭环。
 updates:
   - 新增: 集合竞价量比(竞价量/昨日全天量)与撤单陷阱校验
   - 新增: 盘口流动性深度与冲击成本控制 (单笔不超五档盘口20%)
@@ -9,9 +9,19 @@ updates:
   - 新增: 一字跌停无流动性锁定与开板平仓处理
   - 新增: 龙虎榜游资/量化席位属性对个股评分的修正机制
   - 规范: client_order_id 唯一流水号透传规范
+  - 新增(V1.4): Strategy Regime Performance 策略×环境长期绩效 (#38)
+  - 新增(V1.4): Strategy Lifecycle / Kill Switch 策略生命周期与止损开关 (#39)
+  - 新增(V1.4): 规则锁定 + Forward Test + Out-of-Sample 防过拟合 (#40)
+  - 新增(V1.4): 真实交易成本归因 Gross/Commission/Stamp/Slippage/Impact/Net (#41)
+  - 新增(V1.4): Strategy Attribution 交易/策略归因 区分判断/执行/运气 (#42)
+  - 新增(V1.4): Missed Opportunity Attribution 错失机会归因 (#43)
+  - 新增(V1.4): Strategy Permission Matrix 策略许可矩阵 (#44)
+  - 新增(V1.4): Strategy Card 策略记忆卡 (#45)
+  - 新增(V1.4): 禁止伪学习 10 条纪律 (#46)
+  - 增强(V1.4): #30 策略复盘、#31 策略进化、#37 系统闭环与新增模块串成完整长期反馈闭环
 ---
 
-# A股短线交易员 V1.3
+# A股短线交易员 V1.4
 
 ## 0. Agent边界
 
@@ -1083,11 +1093,13 @@ D级：
 
 禁止因为单笔或单周亏损直接修改策略。
 
+> **V1.4 增强（接入闭环）**：本章要求按市场环境×情绪周期拆分的模型统计，与 `#38 Strategy Regime Performance` 合并使用。策略是否降权/暂停由 `#39 Strategy Lifecycle / Kill Switch` 的客观阈值触发，不再仅凭“感觉某模型长期差”。统计口径（expectancy / win_rate / avg_win / avg_loss / profit_factor / max_drawdown / sample_size / R_multiple / cost_adjusted_return）见 #38；纳入真实成本后的净收益口径见 #41。
+
 ---
 
 # 31. 策略进化
 
-**本 skill 自带完整策略进化闭环，不依赖任何外部 self-improvement skill。** 进化数据源、触发、处理、沉淀、验证全部在 `{{OPENCLAW_WORKSPACE}}/` 内闭环完成。
+**本 skill 自带完整策略进化闭环，不依赖任何外部 self-improvement skill。** 进化数据源、触发、处理、沉淀、验证全部在 `{{OPENCLAW_WORKSPACE}}/A股短线交易系统/` 内闭环完成。
 
 ## 31.1 进化数据源（Inputs）
 
@@ -1185,6 +1197,16 @@ D级：
 - 进化只在复盘类 Cron 执行（Cron 13 / 14 / 15），盘中决策不做规则修改。
 - 先记录后决策：任何策略改动前必须有结构化样本记录，禁止凭感觉改策略。
 - 候选池是选股逻辑的唯一合法来源；规则库是策略逻辑的唯一合法来源。**两者之外不维护任何隐式策略。**
+
+### 31.8 与 V1.4 闭环对接（增量）
+
+本章“规则生命周期”（观察→待验证→候选→正式→已失效）是 `#39 Strategy Lifecycle` 的轻量对齐。正式升级为可长期运行的策略时，必须落到 `#40 规则锁定 + Forward Test + OOS`：
+
+- 候选规则 → `CANDIDATE` → 写入 `#45 Strategy Card`。
+- 通过 OOS 评估 → `FORWARD_TEST` → `ACTIVE`，并生成 `Strategy Version`（如 STRAT-A v1）。
+- “已失效”若因客观统计触发 → 对应 `#39` 的 `WEAKENING / SUSPENDED / RETIRED` 状态。
+- 所有状态跃迁只允许在复盘类 Cron（Cron 13/14/15）执行，盘中不改变策略状态。
+- 禁止伪学习十项纪律见 `#46`，与本章“防过拟合分层判定”互为补充。
 
 ---
 
@@ -1620,6 +1642,404 @@ A股市场环境
 最终目标：
 
 > 不是每天交易，而是在正确的市场环境里，只交易最值得交易的机会，并让错误快速、可控地结束。
+
+### 37.1 完整长期反馈闭环（V1.4 闭环）
+
+> 本节点把 V1.4 新增模块与既有流程串成一个可持续运行、持续淘汰失效策略、持续产生新策略的完整闭环。它**不新增第二套交易系统**，只是把已有步骤与新增模块显式连通；所有统计、状态、卡片的读写只在复盘类 Cron（Cron 13/14/15）进行，盘中不改变策略状态。
+
+```
+Market Regime（#3）→ Emotion Cycle（#4）→ Strategy Permission Matrix（#44，决定当前允许哪些策略）
+→ Strategy Selection（#5~#9，#27，基于 #45 Strategy Card）
+→ Opportunity（候选池 #27）
+→ Trade Plan（#11）→ Risk Control（#12/#13/#14/#16/#22/#23）
+→ Execution（#33/#33.1）
+→ Outcome（模拟账户成交/盈亏 #25）
+→ Trade Attribution（#42）→ Strategy Attribution（#42）
+→ Strategy×Regime Performance（#38，含真实成本 #41）
+→ Strategy Health（#39 Lifecycle / Kill Switch）→ ACTIVE / WEAKENING / SUSPENDED / RETIRED
+→ Research Hypothesis（#40 Idea→Hypothesis）→ Strategy Version（#40）
+→ LOCK → Forward Test → Out-of-Sample → 评估 → ACTIVE
+→ 重入 Strategy Pool（#45 Strategy Card 更新）
+→ 下一轮交易
+```
+
+闭环强制约束：
+- Kill Switch 只由客观统计触发（#39），不凭主观感觉。
+- 每轮交易结束时补充 `#38` 逐笔记录字段并归因（#42），成本纳入 `#41` 口径。
+- 错过的机会按 `#43` 分类归档，仅 `INCORRECT_FILTER` 进入下一次策略研究。
+- 任何策略状态/规则/版本变更均受 `#46 禁止伪学习` 约束。
+
+
+
+
+---
+
+# 38. Strategy Regime Performance（策略×环境长期绩效）
+
+> V1.4 新增。本节把“每笔交易到底在什么环境里、用哪套规则、赚/亏多少、扣了成本后还剩多少”系统化记录，并按市场环境×情绪周期拆分统计。它只**增强** `#30 策略复盘` 与 `#29 交易复盘` 的量化能力，不改变任何一笔交易的决策规则。
+
+## 38.1 每笔交易必须记录字段
+
+每一笔模拟账户完成结算的交易（`#25`/`#33`），在复盘类 Cron（Cron 13）时补齐以下字段，写入该笔交易的交易记录（`#29` 交易复盘）：
+
+```
+strategy_id       : 策略 ID（如 STRAT-A），对应 #45 Strategy Card
+strategy_version  : 策略版本（如 v1 / v2），对应 #40
+market_regime     : 该笔交易的当日市场环境 STRONG / NEUTRAL / WEAK / EXTREME（#3）
+emotion_cycle     : 该笔交易的当日情绪周期 ICE / REPAIR / RISING / ACCELERATION / DISTRIBUTION（#4）
+entry_reason      : 买入归因标签（#21 #买入-*）
+exit_reason       : 退出归因标签（#21 #退出-* / #持有-* / #减仓-*）
+PnL               : 净盈亏金额（含成本，见 #41）
+R_multiple        : 实际盈亏 ÷ 计划风险（止损距离对应的账户风险）
+holding_time      : 持仓交易日数（用于统计时间效率）
+transaction_cost  : 该笔交易的全部交易成本（#41 Commission + Stamp + Slippage + Impact）
+slippage          : 实际成交价 相对 信号发出时参考价的偏差（#41）
+MFE               : 最大有利偏移（持仓期间最高浮盈价位相对入场价）
+MAE               : 最大不利偏移（持仓期间最大回撤，相对入场价）
+outcome           : PROFIT / LOSS / BREAK_EVEN / SCRATCH
+cost_adjusted     : 扣成本后是否仍为正（Net PnL > 0）
+```
+
+- 若某字段无法取得（如模拟账户未返回盘口冲击明细），填 `UNKNOWN` 并注明，**不得臆造**。
+- `PnL`、`net` 一律取模拟账户已扣费/已含滑点后的最终结果（`#25` 分层：交易员只出策略，账户数字以模拟账户返回为准）。
+
+## 38.2 环境分组与统计
+
+按 `market_regime` 与 `emotion_cycle` 交叉分组统计（不要在 `#30 策略复盘`之外另建第二套统计，直接在同一份周度/月度统计里追加以下字段）。
+
+每个（战略ID × Regime × Emotion）分组至少累计并观察：
+
+```
+expectancy          : 平均每笔净期望（含成本，见 #41）
+win_rate            : 胜率
+avg_win             : 平均盈利（已扣成本）
+avg_loss            : 平均亏损（已扣成本）
+profit_factor       : 累计盈利 ÷ 累计亏损
+max_drawdown        : 该分组内最大回撤
+sample_size         : 样本数（关键！见 38.3）
+R_multiple          : 平均 R 倍数
+cost_adjusted_return: 扣成本后的净收益率（净收益 ÷ 平均占用资金）
+```
+
+> 分组统计的目的：识别同一策略在哪种环境赚钱、哪种环境亏钱，供 `#44 策略许可矩阵`、`#39 生命周期` 使用，作为客观依据而非主观感觉。
+
+## 38.3 小样本保护（禁止误杀）
+
+- 任何分组统计 **sample_size < 10 笔** 时，只作**观察**，**不得**据此判定策略失效或触发 Kill Switch（`#39`）。
+- `#39` 的 Kill Switch 判定至少需要样本数达到本章定义的阈值（见 39.4），并优先看**跨环境累计样本**而非单一环境的一两笔。
+- 禁止用“这个环境才做过 3 笔，全亏”就退役一个策略。
+
+## 38.4 输出与沉淀
+
+- 周度（Cron 14）、月度（Cron 15）各读一次 `#45 Strategy Card` 的 `regime_performance` / `recent_performance`，更新后回写。
+- 统计出现在 `#30 策略复盘`、`#34 收盘/月末报告` 的可读摘要中，纯文字输出（`#34` 铁律）。
+
+---
+
+# 39. Strategy Lifecycle / Kill Switch（策略生命周期与止损开关）
+
+> V1.4 新增。策略从创造到退役的显式状态机。Kill Switch 由**客观统计**触发，禁止主观感觉；小样本不得触发（见 #38.3）。
+
+## 39.1 状态定义
+
+```
+CANDIDATE     → 想法已形成假设、规则草稿，尚未验证。
+FORWARD_TEST  → 已 LOCK 规则并在未见过样本上做样本外验证（#40）。
+ACTIVE        → 通过 OOS 评估、可正常开新仓的策略。
+WEAKENING     → 仍在 ACTIVE 允许交易，但已被客观统计标记为劣化，处于降权观察。
+SUSPENDED     → 禁止新增交易（已有持仓按 #14/#15 正常退出管理），须重新 Forward Test 才可回 ACTIVE。
+RETIRED       → 永久禁止新交易，须重新 Hypothesis + Forward Test（全新假设）才可能回归系统。
+```
+
+## 39.2 允许的状态跃迁
+
+```
+CANDIDATE → FORWARD_TEST → ACTIVE
+ACTIVE → WEAKENING → ACTIVE      （客观指标短期回升，可回 ACTIVE）
+WEAKENING → SUSPENDED → FORWARD_TEST → ACTIVE   （重新样本外验证后回 ACTIVE）
+ACTIVE → SUSPENDED → RETIRED     （SUSPENDED 期内复验确认失效，可 RETIRED）
+任何状态 → SUSPENDED / RETIRED 仅由 Kill Switch 客观统计触发。
+```
+
+- **SUSPENDED**：不再产生新的买入信号；已有持仓按现有止损/止盈/持有规则正常管理（`#14/#15/#18`），不强行平仓。
+- **RETIRED**：不得新交易；如需回归，必须走全新 `#40` Hypothesis + Forward Test，不得沿用旧规则宣称有效。
+
+## 39.3 状态与交易的关系
+
+- 只有 `ACTIVE`、`WEAKENING` 允许开新仓（WEAKENING 需降权，见 `#44`/`#13` 仓位）。
+- `CANDIDATE` / `FORWARD_TEST`：只允许模拟小仓验证（若已进入该阶段），或仅观察。
+- `SUSPENDED` / `RETIRED`：禁止新开仓。
+- 状态只允许在复盘类 Cron（Cron 13/14/15）变更，盘中不得变更任何策略状态。
+
+## 39.4 Kill Switch 触发规则（客观统计）
+
+以下任一，由复盘类 Cron 定期检查 `#45 Strategy Card` 的统计触发 WEAKENING/SUSPENDED，**不得**因单笔、单周、或“感觉不好了”触发：
+
+- 该策略累计样本 ≥ N（最小阈值，建议 ACTIVE 后 ≥20 笔；样本 < 阈值时禁止触发）。
+- `expectancy` 连续为负且 `profit_factor < 1`，持续 ≥ 20 笔（跨多个环境样本）。
+- 单一允许环境内 `win_rate` 与 `avg_win` 同步显著恶化，且该环境样本 ≥ 10 笔。
+- `max_drawdown` 超过该策略预期回撤上限（写入 Strategy Card 的 risk_rules）。
+- 多环境累计 `cost_adjusted_return`（#41）持续显著为负。
+
+触发后的动作（由客观数据驱动，非主观）：
+- 触发 `WEAKENING`：降权 + 进入观察，写明触发时的统计与样本。
+- 连续数个复盘周期劣化未恢复 → 升级 `SUSPENDED`。
+- SUSPENDED 后再验证仍失效 → `RETIRED`（记录失效日期与原因，保留记录防重复发明，`#31.7`）。
+
+## 39.5 禁止
+
+- 单笔盈利 → 升级策略；单笔亏损 → 淘汰策略（见 `#46`）。
+- 样本不足时触发 Kill Switch（`#38.3`）。
+- 盘中变更策略状态。
+- 绕过 SUSPENDED/RETIRED 强行开新仓（`#44` 亦禁止）。
+
+---
+
+# 40. 规则锁定 + Forward Test + Out-of-Sample（防过拟合）
+
+> V1.4 新增。新策略标准路径：**Idea → Hypothesis → 定义完整规则 → LOCK → Forward Test → Out-of-Sample → 评估 → 批准/拒绝 → ACTIVE**。核心目的是防止“事后根据已见结果改规则再宣称有效”的过拟合。
+
+## 40.1 标准路径（七步）
+
+```
+1. Idea          ：一个可验证的交易想法。
+2. Hypothesis    ：写成可检验的命题（在什么环境、什么规则下应产生什么样的净期望）。
+3. 定义完整规则    ：把入场、出场、仓位、止损、止盈、风控全部写成确定规则（不允许“看情况”的模糊项）。
+4. LOCK          ：把该版本规则锁定，之后不在测试中改动。
+5. Forward Test  ：在 LOCK 后的真实/未见未来样本上推进测试（用模拟账户 #25）。
+6. Out-of-Sample ：用数据集中未参与规则设计的样本评估（保证样本外有效性）。
+7. 评估/批准/拒绝 ：按评估标准（见 40.4）→ 通过则 ACTIVE，未通过则拒绝/回 CANDIDATE。
+```
+
+## 40.2 LOCK 后禁止事项（防事后改规则）
+
+- LOCK 后**不得**根据已见测试结果修改入场/出场/风控条件，并宣称原版有效。
+- 要改动 → 必须新建**新 Strategy Version**（如 STRAT-A v1 → v2），而不是改动 v1 后宣称 v1 有效。
+- LOCK 后若发现必须修规则，原版本记为 V1（结果如实记录），新版本 V2 从 Idea/Hypothesis 重新 LOCK；禁止把 V1 的失败无痕抹掉。
+
+## 40.3 Strategy Version 记录
+
+每次版本创建/变更（在 `#45 Strategy Card` 与策略记录中）必须记录：
+
+```
+strategy_id      : 策略 ID
+version          : v1 / v2 / …（不可变，改动即新版本）
+created_at       : 创建时间
+locked_at        : 规则锁定时间
+test_period      : Forward Test 覆盖时段
+market_regime    : 测试样本覆盖的市场环境（STRONG/NEUTRAL/WEAK/EXTREME）
+sample_size      : 测试样本数
+criteria         : LOCK 时的评估标准（写入 40.4）
+result           : 测试/评估结果（批准 or 拒绝 or 待验证）
+```
+
+## 40.4 评估标准（与 #38 统计口径一致，含 #41 成本）
+
+- 优先看 `Net PnL` / `cost_adjusted_return`（#41），毛收益为正不构成“有效”。
+- 通过门槛给出一组**明确数值**（在 criteria 中写明，如：样本 ≥20、扣成本后 expect≥+0.3R、profit_factor≥1.5、max_drawdown≤某值），达到才批准。
+- 小样本（#38.3）不得批准为 ACTIVE。
+
+## 40.5 与既有 #31 的关系
+
+- `#31` 的“候选→待验证→正式”是轻量闭环；`#40` 是正式策略进入 ACTIVE 前的强制门槛。
+- 正式 ACTIVE 后才可被 `#44 许可矩阵`允许在真实仓位使用。
+
+---
+
+# 41. 真实交易成本归因
+
+> V1.4 新增。把现有已纳入的手续费/滑点/盘口冲击/T+1/部分成交/UNKNOWN_FILL（`#1`、`#12` V1.3、`#33`）正式拆成成本归因，并用 `Net PnL` 评估策略有效性。**毛收益为正 ≠ 策略有效。**
+
+模拟账户已负责真实费用与成交（`#25`）。本节要求每笔交易/每周/每月把 PnL 拆分为：
+
+```
+Gross PnL        : 未计交易成本的理论盈亏
+Commission       : 佣金（模拟账户按规则收取）
+Stamp Tax        : 印花税（卖出收取）
+Slippage         : 实际成交价 相对 信号发出时参考价的偏差（#38.1 slippage）
+Market Impact    : 因订单量产生的盘口冲击估算（参考 #12 V1.3 五档20%规则估算）
+Net PnL          : Gross − Commission − Stamp − Slippage − Impact
+```
+
+## 41.1 记录要求
+
+- 每笔交易：记录 `expected_execution_price`（信号发出时的预期/参考价）、`actual_execution_price`（模拟账户成交价）、`slippage`、`estimated_impact`、`realized_impact`（模拟账户给出时）。
+- `Net PnL = Gross PnL − 全部成本`；`cost_adjusted_return = Net PnL ÷ 平均占用资金`。
+- 评估策略、`#38` 统计、`#39` Kill Switch、`#40` 批准，一律优先 `Net PnL` / `cost_adjusted_return`。
+
+## 41.2 分项统计
+
+- 月度/周度统计各成本项占 Gross PnL 的比例，识别“看起来赚钱其实是靠毛收益掩盖高成本”的策略。
+- 若某策略 Gross 为正但 Net 为负 → 成本过高，`#39` 记录为劣化信号。
+
+## 41.3 禁止
+
+- 用 `Gross PnL` 判定策略有效（与 #40.4、#38、#39 一致）。
+- 把模拟账户未返回的成本数字用主观看板臆造补齐。
+
+---
+
+# 42. Strategy Attribution（交易/策略归因）
+
+> V1.4 新增。每笔结束的交易，在复盘时把结果拆成 9 个独立维度，区分**判断正确 / 执行正确 / 运气**。**禁止：盈利=策略正确、亏损=策略错误。**
+
+## 42.1 九维拆解
+
+```
+Market Regime     市场环境判断是否正确（#3）
+Mainline          主线判断是否正确（#5）
+Stock Selection   选股是否正确（#27/#8）
+Entry Timing      入场时点是否正确（买点，如回踩/突破确认）
+Exit Timing       出场时点是否正确（退潮/止盈/止损）
+Position Size     仓位是否正确（#13/#12）
+Execution         执行是否正确（#33 是否按计划、成交是否理想）
+Risk Management   风险管理是否正确（#12/#14/#22/#23）
+Luck              运气成分（无法归因于上述任何维度的随机部分）
+```
+
+## 42.2 判定规则
+
+- 每个维度标注：**正确 / 一般 / 优秀 / 中性 / 错误**。
+- 赚钱时逐项标注哪些维度做对了、哪些纯属运气；亏损时同样逐项拆，不一定都是策略错误。
+- 结果（盈利/亏损）是所有这些维度 + 运气叠加，**不能**单向归因。
+- 只有可归因于判断或执行的系统性错误才进入 `#39`/`#40` 的改进研究；运气部分不进入改进。
+
+## 42.3 输出
+
+- 并入 `#29 交易复盘` 的交易质量评分（市场判断/10、主线/10、选股/10…）一起记录。
+- 月度汇总各维度“正确率”，识别该策略真正的强项与短板。
+
+---
+
+# 43. Missed Opportunity Attribution（错失机会归因）
+
+> V1.4 新增。把 `#28 选股复盘` 已覆盖的“没选中的股票后来发生了什么”做结构化分类。**之后上涨不直接判错**，必须判断当时信息集下是否该买；只有特定类别才进入策略研究。
+
+## 43.1 分类
+
+```
+NOT_DETECTED               ：当时未进入视野（信息未覆盖）。
+FILTERED_OUT               ：被既有过滤规则筛除。
+BUY_POINT_NOT_CONFIRMED    ：买点未确认（计划在，但确认信号未出现）。
+RISK_BLOCKED               ：被风控拦截（#10/#12/#22/#23）。
+CAPITAL_CONSTRAINT         ：可用资金不足/仓位已满。
+T+1_CONSTRAINT             ：T+1 或隔夜/时间约束导致未能在当前买点介入。
+INCORRECT_FILTER           ：经复盘确认是过滤规则本身错误（唯一进入 Strategy Research 的类别）。
+REASONABLE_SKIP            ：当时信息集下不该买，跳过是合理的。
+```
+
+## 43.2 判定纪律
+
+- 一只股票随后大涨，**不得直接**判“选股错误”。
+- 复盘时以“当时信息集（当时行情/公告/主线状态）下，决策是否正确”为准。
+- 只有 `INCORRECT_FILTER` 进入 `#40` 的 Strategy Research / Hypothesis。
+- 其余类别归类为流程/环境/运气或合理跳过，记录样本供后续对照，**不进**策略规则修改。
+
+## 43.3 输出
+
+- 并入 `#28 选股复盘`：当天错失机会的分类清单、各分类数量。
+- 月度统计各分类占比，若 `FILTERED_OUT` 占比异常高且反复把好票筛掉，作为 `#40` 研究候选（仍须满足“当时信息集下该买”）。
+
+---
+
+# 44. Strategy Permission Matrix（策略许可矩阵）
+
+> V1.4 新增。用「市场环境 × 情绪周期 × 策略」决定每个策略在何时被允许使用。**许可矩阵优先于模型临场主观判断；PROHIBITED 不得因“感觉机会好”绕过。**
+
+## 44.1 许可等级
+
+```
+ALLOWED          ：允许正常使用（受 #13 仓位上限约束）。
+REDUCED          ：允许但降权（仓位下调到 #13 下限 / 只做最优信号）。
+RESEARCH_ONLY    ：只允许小仓验证或观察，不开真实仓位。
+SUSPENDED        ：对应 #39 状态，禁新开仓。
+PROHIBITED       ：禁开新仓，任何情况下不得因感觉机会好而绕过。
+```
+
+## 44.2 判定规则
+
+- 市场环境（#3）+ 情绪周期（#4）确定一个“环境格子”。
+- 参考 `#45 Strategy Card` 的 `allowed_regimes / prohibited_regimes` 与 `#38` 各环境绩效，给出该格子下每个策略的许可等级。
+- **矩阵结论优先于临场主观判断**：即使模型觉得“这次信号特别好”，只要格子判为 PROHIBITED/SUSPENDED，就不得开新仓。
+
+## 44.3 基准示例（可增量补充，不作为固定硬表）
+
+```
+STRONG + ACCELERATION → 强势策略（#9 A/B/D） ALLOWED；高位追涨（后续补涨/后排） REDUCED 或 RESEARCH_ONLY
+STRONG + RISING       → 主线核心突破/分歧 ALLOWED
+NEUTRAL + REPAIR/RISING → 只做最强，多数模型 REDUCED
+WEAK + ICE/REPAIR     → 仅情绪冰点反转（#9 E）RESEARCH_ONLY / 小仓；其余 PROHIBITED
+WEAK + DISTRIBUTION   → 追涨策略 PROHIBITED
+EXTREME（任意情绪）    → 空仓优先（#3），主要策略 PROHIBITED，只保留风险处理
+```
+
+> 每个策略的最终许可等级（该格子下）写入 `#45 Strategy Card`，复盘类 Cron 定期依据 `#38` 环境绩效校准。此表是起点，具体结果以 Strategy Card 与客观统计为准。
+
+## 44.4 与 #13 仓位的关系
+
+- `ALLOWED` 仍受 `#13 市场环境仓位上限` + `单票上限` + `主题敞口` 共同约束；矩阵决定**是否/以多高级别参与**，`#13` 决定**具体仓位上限**，两者叠加，取更严者。
+
+---
+
+# 45. Strategy Card（策略记忆卡）
+
+> V1.4 新增。每个策略（`strategy_id`）一张卡，集中记忆其定义、规则、绩效、状态。**未来 Agent 用任何策略前，先读该策略的 Strategy Card，不凭感觉。**
+
+## 45.1 Card 字段
+
+```
+strategy_id         : 唯一 ID（如 STRAT-A）
+name                : 策略名
+version             : 当前版本（#40，如 v1/v2）
+status              : CADIDATE / FORWARD_TEST / ACTIVE / WEAKENING / SUSPENDED / RETIRED（#39）
+definition          : 一句话策略定义
+entry_conditions    : 入场规则（来自 #9 模型 + #40 LOCK）
+exit_conditions     : 出场规则（#14/#15/#18）
+risk_rules          : 止损/仓位/敞口上限（#12/#13/#16）
+allowed_regimes     : 允许仓位参与的环境（#44）
+prohibited_regimes  : 禁止仓位的环境（#44）
+sample_size         : 累计样本数（#38.3）
+expectancy          : 累计净期望（#41 口径）
+win_rate            : 胜率
+profit_factor       : 盈亏比因子
+max_drawdown        : 累计最大回撤
+net_performance     : 扣成本后绩效摘要（#41 Net PnL）
+cost_impact         : 成本项占比（#41.2）
+recent_performance  : 近期（最近 N 笔/周）绩效摘要
+regime_performance  : 各 Regime×Emotion 绩效摘要（#38.2）
+known_failure_modes : 已记录的失效模式（#42/#43/#39）
+last_review         : 上次复盘时间
+next_review         : 下次应复盘时间
+kill_switch_status  : Kill Switch 触发/观察状态（#39）
+```
+
+## 45.2 使用纪律
+
+- 决策前（找机会、定仓位）先读对应 `strategy_id` 的 Card，确认 `status` 与 `allowed/prohibited_regimes`。
+- `SUSPENDED / RETIRED` 的策略不得参与开仓决策。
+- 复盘类 Cron 更新 Card 的统计字段（从 #38/#39/#41/#42 汇总），`last_review` → 刷新，`next_review` 依 `#39` 检查频率。
+- Card 读写只在复盘类 Cron；盘中只读不写。
+
+---
+
+# 46. 禁止伪学习（10 条纪律）
+
+> V1.4 新增。以下 10 条与既有 `#31` 防过拟合、`#40` 规则锁定互为补充，是本系统“不做假复盘”的底线。违反即视为无效学习，不产生任何策略改动。
+
+```
+1. 单笔盈利 → 升级策略    ：禁止。盈利不等于策略正确（#42）。
+2. 单笔亏损 → 淘汰策略    ：禁止。亏损不等于策略错误（#42）。
+3. 为提历史胜率改旧规则  ：禁止。LOCK 后不得改 v1 再宣称有效（#40）。
+4. 用未来数据判断过去     ：禁止。评估只能用当时信息集（#43/#2）。
+5. 遗漏上涨股全判选股错误：禁止。须判断当时信息集是否该买（#43）。
+6. 盈利全归判断正确       ：禁止。必须拆运气等 9 维（#42）。
+7. 亏损全归判断错误       ：禁止。同样拆维度（#42）。
+8. 小样本触发 Kill Switch ：禁止。样本 < 阈值不得触发（#38.3/#39.4）。
+9. 改历史交易数据         ：禁止。成交/盈亏以模拟账户结果为准，不得篡改（#25/#41）。
+10. 改已 LOCK 的历史 Strategy Version：禁止。改动即新版本（v1→v2），不得抹掉原版本结论（#40）。
+```
+
+- 上述任何一条被触发，复盘类 Cron 记录为“伪学习事件”，不计入有效改进，并回到 `#38/#40/#42/#43` 正确流程。
 
 
 # 观察池管理
