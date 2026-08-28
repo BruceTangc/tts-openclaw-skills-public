@@ -1,6 +1,7 @@
 # Decision Log
 
 > 回答：**当时为什么做这个决定？** 记忆层 #3（Decision）。执行前必须先形成 Decision（先决策后交易）。
+> V3.2 协议：每条 Decision 必须反向追踪到 Evidence（Evidence→Worklog→Decision 全链可追溯）。
 > 每条 Decision 都是未来复盘的锚点。追加写入，不覆盖。
 
 ---
@@ -8,6 +9,8 @@
 ## DEC-{YYYYMMDD}-{序号}
 
 - **日期**：YYYY-MM-DD
+- **决策时间/阶段**：
+- **Evidence IDs**：EV-{YYYYMMDD}-xx（本条决策引用的全部原始事实）
 - **股票**：代码 + 名称
 - **Decision**：BUY / ADD / HOLD / WAIT / REDUCE / SELL / REMOVE / NO ACTION
 - **触发来源**：晨会 / 事件(P0-P3) / 14:30机会扫描 / 14:45二次验证 / 投资委员会 / 主动研究

@@ -1,6 +1,7 @@
 # 周度投资委员会 — YYYY-MM-DD ~ YYYY-MM-DD
 
 > 不要只看「本周赚了多少钱」。必须分析：收益/风险/回撤/决策质量/风险来源/假设/错误/成功/机会成本/Research Agenda。
+> V3.2 协议：归因结论需引用本周 Evidence ID；周日必执行 Watchlist Stale Review（经 mx-zixuan）。
 > 重点区分：**判断正确但短期亏损** vs **判断错误但短期赚钱**。两者不能混为一谈。
 
 ## 一、本周组合表现
@@ -12,10 +13,10 @@
 - 未做的机会成本
 
 ## 三、本周决策质量评估
-逐条回顾 Decision：判断 vs 结果（短期），区分「判断质量」与「运气」
+逐条回顾 Decision（引用 Decision ID 与 Evidence ID）：判断 vs 结果（短期），区分「判断质量」与「运气」
 
 ## 四、假设审查
-- 哪些假设加强？哪些削弱？置信度如何变动？
+- 哪些假设加强？哪些削弱？置信度如何变动？（引用 Evidence ID）
 - 是否有假设需证伪/重建/放弃？
 
 ## 五、错误与成功
@@ -27,6 +28,9 @@
 
 ## 七、下周 Research Agenda
 - 3~5 项重点
+
+## 七之一、Watchlist Stale Review（本周必执行，经 mx-zixuan）
+逐条判定：KEEP / UPGRADE / DOWNGRADE / WAITING / REJECT（每条给理由 + Evidence ID）
 
 ## 八、长期体系复盘
 - 经验归纳 / 错误分析 / 长期规则是否需调整（须多次案例验证）
