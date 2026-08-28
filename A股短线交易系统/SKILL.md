@@ -315,10 +315,10 @@ L5  综合          Evidence → Trading Hypothesis → Strategy Permission（#4
 | **mx-data** | 指数 / 个股实时•历史行情、成交量额、涨跌幅、资金、市场广度、板块 / 个股价格行为、盘中市场状态、炸板率 / 高位股风险等实时数据 | BUY 判断依赖**当前行情 / 市场 / 情绪状态**时 | **优先 mx-data**；任何实际 BUY 前，若判断依赖实时状态，**必须重取最近有效状态**，不得只用早盘 / 上次检查结果。 |
 | **mx-search** | 新闻、公告、政策、监管、突发事件、公司 / 行业最新公开信息，确认“最近发生了什么” | Thesis 或 Decision 依赖某条新闻 / 公告 / 政策 / 事件时 | **必须 mx-search 获取当前证据**，不得用模型记忆中的新闻替代当前搜索。 |
 | **mx-xuangu** | 候选发现、条件初筛、缩小研究范围 | 在全市场找候选 / 初筛时 | 结果只是 **Candidate ≠ Buy Signal**；须走 `Candidate→Evidence→Thesis→Risk→Permission→Decision`，**禁止“选出来”=“可以买”**。 |
-| **SHORT_TERM_WATCHLIST / mx-zixuan**（若已有） | 维护观察池 / 跟踪已研究未交易标的 / 保存 Candidate 观察状态 | 已有该池且需保存观察状态时 | 观察池 ≠ 持仓 ≠ 交易许可；它只是研究留档，不产生买入资格。 |
+| **SHORT_TERM_WATCHLIST（本地候选池 `data/watchlist.json`）** | 维护观察池 / 跟踪已研究未交易标的 / 保存 Candidate 观察状态（**本地文件，非 mx-zixuan**） | 已有候选池且需保存观察状态时 | 观察池 ≠ 持仓 ≠ 交易许可；它只是研究留档，不产生买入资格。 |
 | **QVeris** | 海外市场、全球宏观、汇率、商品、海外政策事件、国际产业链、跨来源验证复杂事实、mx-search 无法充分验证的外部信息、重大 Thesis 独立交叉验证 | **只有** Decision 依赖上述外部变量，或需深度验证 / 交叉验证时才调 | **不是“每笔必须调”的固定步骤**；不得为形式完整而无意义调用。 |
 
-> ⚠️ SHORT_TERM_WATCHLIST / mx-zixuan 观察池仅用于跟踪已研究、可能参与但当前未交易的标的，**不代表持仓，也不授予任何交易许可**；是否买入仍须走完整漏斗与 Permission（#44）。
+> ⚠️ **SHORT_TERM_WATCHLIST 观察池**仅用于跟踪已研究、可能参与但当前未交易的标的，它**不是 mx-zixuan 工具**，而是本地文件中：`data/watchlist.json`（`#24`/`#27`）。**不代表持仓，也不授予任何交易许可**；是否买入仍须走完整漏斗与 Permission（#44）。
 
 ---
 
