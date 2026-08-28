@@ -17,6 +17,11 @@ MIN_SAMPLE = cfg["min_strategy_sample"]
 ADJUST_SAMPLE = cfg["adjust_strategy_sample"]
 CONFIRM_SAMPLE = cfg["confirm_strategy_sample"]
 
+# 随机基线：Top2(2组) 从 10 组预测里随机选出，命中唯一最佳组合的概率 ≈ buy_count/prediction_count = 2/10 = 0.2
+RANDOM_TOP2_BASELINE = 0.2
+# 显著差判定容差：top2_acc 低于随机基线的 (1 - SIGNIFICANT_MARGIN) 倍才算"跑不赢随机"
+SIGNIFICANT_MARGIN = 0.5
+
 STRATEGY_FILE = STRATEGY_DIR / "current_strategy.json"
 HISTORY_DIR = STRATEGY_DIR / "strategy_history"
 
@@ -87,7 +92,7 @@ def evaluate_strategy(strategy, performance_data):
     win_rate = performance_data.get("win_rate", 0)
     roi = performance_data.get("roi", 0)
 
-    # 样本不足，保持
+    # 样本不足，保持（不触发任何调整）
     if total_runs < MIN_SAMPLE:
         return {
             "action": "KEEP",
@@ -95,37 +100,43 @@ def evaluate_strategy(strategy, performance_data):
             "details": {"runs": total_runs, "required": MIN_SAMPLE},
         }
 
-    # 样本达到调整阈值
-    if total_runs >= ADJUST_SAMPLE:
-        # 表现优秀：保持
-        if top2_acc > 0.01 and roi > -50:
-            return {
-                "action": "KEEP",
-                "reason": f"表现良好：Top-2 Acc={top2_acc*100:.2f}%, ROI={roi:.1f}%",
-                "details": {"top2_accuracy": top2_acc, "roi": roi},
-            }
+    # 显著差阈值：Top-2 准确性严格低于随机基线（含容差）才算"跑不赢随机"
+    # 只有在此前提下，跑满阈值次数才可能 ADJUST/REVERT，杜绝"跑满次数就无条件调"
+    under_random = top2_acc < RANDOM_TOP2_BASELINE * (1 - SIGNIFICANT_MARGIN)
 
-        # 表现差：建议调整
-        if top2_acc < 0.005 or roi < -80:
-            return {
-                "action": "ADJUST",
-                "reason": f"表现不佳：Top-2 Acc={top2_acc*100:.2f}%, ROI={roi:.1f}%，建议调整策略",
-                "details": {"top2_accuracy": top2_acc, "roi": roi},
-            }
+    # REVERT：达标长期观察且显著低于随机（且绝对水平很低）→ 回退到默认
+    if total_runs >= CONFIRM_SAMPLE and under_random and top2_acc < 0.05:
+        return {
+            "action": "REVERT",
+            "reason": (f"长期表现显著低于随机基线：Top-2 Acc={top2_acc*100:.2f}% "
+                        f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%)，ROI={roi:.1f}%，建议回退到默认策略"),
+            "details": {
+                "top2_accuracy": top2_acc, "roi": roi, "win_rate": win_rate,
+                "random_baseline": RANDOM_TOP2_BASELINE, "total_runs": total_runs,
+            },
+        }
 
-    # 样本达到确认阈值，但表现平平
-    if total_runs >= CONFIRM_SAMPLE:
-        if top2_acc < 0.003:
-            return {
-                "action": "REVERT",
-                "reason": f"长期表现差：Top-2 Acc={top2_acc*100:.2f}%，建议回退到默认策略",
-                "details": {"top2_accuracy": top2_acc, "total_runs": total_runs},
-            }
+    # ADJUST：达标调整样本且显著低于随机基线 → 才调整（不再"跑满次数就无条件调"）
+    if total_runs >= ADJUST_SAMPLE and under_random:
+        return {
+            "action": "ADJUST",
+            "reason": (f"表现显著低于随机基线：Top-2 Acc={top2_acc*100:.2f}% "
+                        f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%)，ROI={roi:.1f}%，建议调整策略"),
+            "details": {
+                "top2_accuracy": top2_acc, "roi": roi, "win_rate": win_rate,
+                "random_baseline": RANDOM_TOP2_BASELINE, "total_runs": total_runs,
+            },
+        }
 
+    # 默认 KEEP：达标样本但不显著差 / 未达调整阈值，保持观察
     return {
         "action": "KEEP",
-        "reason": f"表现中性，继续观察（{total_runs}次运行）",
-        "details": {"top2_accuracy": top2_acc, "total_runs": total_runs},
+        "reason": (f"表现正常/中性：Top-2 Acc={top2_acc*100:.2f}% "
+                    f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%)，ROI={roi:.1f}%，{total_runs}次运行"),
+        "details": {
+            "top2_accuracy": top2_acc, "roi": roi, "win_rate": win_rate,
+            "random_baseline": RANDOM_TOP2_BASELINE, "total_runs": total_runs,
+        },
     }
 
 

@@ -226,10 +226,21 @@ def _run_strategy_loop(review_result):
 
         s = perf.get("success", 0)
         f = perf.get("fail", 0)
+        runs = perf.get("total_runs", 0)
+        wins = perf.get("total_wins", 0)
+        # 真实 Top-2 准确性（累计 selection_accuracy，0~1 分数）
         sel_acc = perf.get("selection_accuracy", 0)
+        # 真实 ROI（当期实际投注/奖金回报，%）：作为辅助信号，不单独触发 ADJUST
+        total_bet = review_result.get("total_bet", 0)
+        total_prize = review_result.get("total_prize", 0)
+        roi = ((total_prize - total_bet) / total_bet * 100) if total_bet > 0 else 0.0
+        # #8 修复：补传 top2_accuracy 与 roi，使 evaluate_strategy 可据真实表现判定，
+        # 不再因缺字段恒为 0 而"跑满 50 次后无条件 ADJUST"。
         perf_data = {
-            "total_runs": perf.get("total_runs", 0),
-            "win_rate": (perf.get("total_wins", 0) / perf.get("total_runs", 1)) * 100 if perf.get("total_runs", 0) > 0 else 0,
+            "total_runs": runs,
+            "win_rate": (wins / runs * 100) if runs > 0 else 0,
+            "top2_accuracy": sel_acc,
+            "roi": roi,
         }
         eval_result = evaluate_strategy(strategy, perf_data)
         action = eval_result.get("action", "KEEP")
