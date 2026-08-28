@@ -2,6 +2,7 @@
 
 > 回答：**当时为什么做这个决定？** 记忆层 #3（Decision）。执行前必须先形成 Decision（先决策后交易）。
 > V3.2 协议：每条 Decision 必须反向追踪到 Evidence（Evidence→Worklog→Decision 全链可追溯）。
+> V3.3.3：决策选项含四态 NO_ACTION/HOLD/WAIT/BLOCKED（见〇.0）：NO_ACTION=研究了但结论不变；BLOCKED=本可能改变但被 Decision Gate/硬约束拦截（须记录拦截项，不得降级 HOLD/NO_ACTION 蒙混）。
 > 每条 Decision 都是未来复盘的锚点。追加写入，不覆盖。
 
 ---
@@ -12,7 +13,7 @@
 - **决策时间/阶段**：
 - **Evidence IDs**：EV-{YYYYMMDD}-xx（本条决策引用的全部原始事实）
 - **股票**：代码 + 名称
-- **Decision**：BUY / ADD / HOLD / WAIT / REDUCE / SELL / REMOVE / NO ACTION
+- **Decision**：BUY / ADD / HOLD / WAIT / REDUCE / SELL / NO_ACTION / BLOCKED
 - **触发来源**：晨会 / 事件(P0-P3) / 14:30机会扫描 / 14:45二次验证 / 投资委员会 / 主动研究
 
 ### 决策依据

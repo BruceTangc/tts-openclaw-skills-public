@@ -43,10 +43,17 @@
 ## 证伪条件（falsifiers）
 | 指标 | 触发条件 | 动作 |
 |:----|:----|:----|
-|  |  | RE_STUDY / EXIT / EXIT_FORCE |
+|  |  | ACTIVE→WEAKENING→INVALIDATED / ARCHIVED |
 
-## 生命周期
-- **阶段**：START / BUILD / HOLD / REDUCE / SELL / WATCH
+## 生命周期（V3.3.3：统一六态 IDEA→VALIDATING→ACTIVE→WEAKENING→INVALIDATED→ARCHIVED）
+> 状态推进必须有 Evidence 或明确规则驱动，不得仅凭主观标状态；状态变化写原因 + 引用 Evidence ID。
+- **lifecycle_status**：`IDEA / VALIDATING / ACTIVE / WEAKENING / INVALIDATED / ARCHIVED`（新假设默认 VALIDATING；INVALIDATED/ARCHIVED 属历史，不得作 BUY/ADD 依据。）
+- **invalidation_conditions**：什么发生就推翻此假设（与下方「证伪条件」一致，供主动监测）
+- **confidence**：当前置信度（0~1 或 %，见文件末尾）
+- **last_verified**：上次验证日期
+- **next_verification**：下次验证日期
+- **freshness**：核心证据时效 FRESH / AGING / STALE（同 9.6；STALE 不得作唯一关键依据，须重查/降 Confidence/入 Agenda）
+
 - **目标仓位 %**：___   **最大仓位 %**：___
 - **上次审查**：____   **审查周期**：____
 
@@ -55,3 +62,4 @@
 |:----|:----|:----|:----|:----|:----|
 
 ## 当前置信度：___%   上次验证：____   下次验证：____
+> lifecycle_status：___    freshness（核心证据）：___   （STALE 须重查/降 Confidence/入 Agenda）
