@@ -25,5 +25,11 @@
   "adjust_strategy_sample": 50,
   "confirm_strategy_sample": 100,
   "front_omission_target": 20,
-  "back_omission_target": 10
+  "back_omission_target": 10,
+  "balanced_hot_adjust": 0.06,
+  "balanced_cold_adjust": 0.08,
+  "balanced_trend_adjust": 0.05,
+  "balanced_omission_adjust": 0.1,
+  "balanced_max_total_adjust": 0.2,
+  "exposure_penalty_coef": 0.04
 }

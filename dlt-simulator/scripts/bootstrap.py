@@ -17,6 +17,7 @@ from diversify import full_diversify
 from validator import filter_historical, load_history_combos, build_history_combos
 from prize_checker import determine_tier
 from stat_rigor import random_baseline_pool, evaluate_candidates, compare_to_random, theoretical_prob_report
+from strategy_manager import get_generator_params
 
 cfg = load_config()
 FRONT_MIN = cfg["front_min"]
@@ -68,8 +69,9 @@ def walk_forward_backtest(draws, strategy="balanced", train_window=200, test_cou
         # 测试目标：第 train_window + i 期
         test_draw = draws[i + train_window]
 
-        # 生成候选（基于训练数据）
-        candidates = generate_top_candidates(train_draws, strategy, top_n)
+        # 生成候选（基于训练数据；策略参数闭环传入生成器）
+        candidates = generate_top_candidates(train_draws, strategy, top_n,
+                                             params=get_generator_params())
         diversified = full_diversify(candidates, top_n)
         # 历史过滤只用“训练窗口内的数据”建立集合，禁止未来数据泄露：
         # 不能用 load_history_combos()（它读整个 history_draws.json，含测试点之后）。
@@ -172,7 +174,8 @@ def bootstrap_analysis(draws, strategy="balanced", iterations=None,
             pool = random_baseline_pool(top_n)
             filtered = pool
         else:
-            candidates = generate_top_candidates(train_draws, strategy, top_n, cfg["candidate_pool_size"])
+            candidates = generate_top_candidates(train_draws, strategy, top_n, cfg["candidate_pool_size"],
+                                                 params=get_generator_params())
             diversified = full_diversify(candidates, top_n)
             train_history_combos = build_history_combos(train_draws)
             filtered, _ = filter_historical(diversified, train_history_combos)

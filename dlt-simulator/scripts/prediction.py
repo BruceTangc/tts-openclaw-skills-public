@@ -20,7 +20,8 @@ from statistics import full_statistics
 from generator import generate_top_candidates
 from diversify import full_diversify
 from validator import filter_historical, load_history_combos
-from strategy_manager import load_current_strategy
+from strategy_manager import load_current_strategy, get_generator_params
+from stat_rigor import distribution_diagnostics
 
 cfg = load_config()
 PREDICTION_COUNT = cfg["prediction_count"]
@@ -139,16 +140,20 @@ def generate_prediction(strategy_name=None, prediction_count=None):
         return {"error": "无法获取历史数据"}
 
     # 2. 确定策略
+    strategy_info = load_current_strategy()
     if strategy_name is None:
-        strategy_info = load_current_strategy()
         strategy_name = strategy_info.get("name", "balanced")
+    # 策略参数闭环：把 current_strategy.params 真实传入生成器（hot/cold/trend/omission
+    # 权重及 balanced 弱修正参数），任何 adjust 后的参数都会影响本次生成。
+    params = get_generator_params(strategy_info)
 
     # 3. 统计分析
     stats = full_statistics(draws)
 
     # 4. 生成候选
     candidates = generate_top_candidates(
-        draws, strategy_name, prediction_count, cfg["candidate_pool_size"]
+        draws, strategy_name, prediction_count, cfg["candidate_pool_size"],
+        params=params,
     )
 
     # 5. 多样性过滤
@@ -162,7 +167,8 @@ def generate_prediction(strategy_name=None, prediction_count=None):
     if len(filtered) < prediction_count:
         # 补充生成
         extra = generate_top_candidates(
-            draws, strategy_name, prediction_count * 2, cfg["candidate_pool_size"]
+            draws, strategy_name, prediction_count * 2, cfg["candidate_pool_size"],
+            params=params,
         )
         extra_diversified = full_diversify(extra, prediction_count * 2)
         extra_filtered, _ = filter_historical(extra_diversified, history_combos)
@@ -216,6 +222,7 @@ def generate_prediction(strategy_name=None, prediction_count=None):
         ],
         "historical_filtered": rejected,
         "stats_summary": _stats_summary(stats),
+        "distribution_diagnostics": distribution_diagnostics(filtered),
         "timestamp": datetime.now().isoformat(),
     }
 

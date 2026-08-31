@@ -17,6 +17,9 @@ stat_rigor.py — 统计严谨性增强模块（基于 3519810 设计基准新�
 """
 import random
 import math
+from collections import Counter
+
+from common import mean, std
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +243,89 @@ def compare_to_random(strategy_metrics, random_metrics):
     return {
         "deltas": deltas,
         "disclaimer": "这是相对于随机基线的历史样本表现差异，不代表未来中奖概率提高。",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 六、分布诊断（distribution diagnostics）
+# ---------------------------------------------------------------------------
+def portfolio_distribution(candidates):
+    """对一个候选组合集合做分布诊断。
+
+    只描述“候选组合池”的号码曝光/结构特征（是否均匀、有无曝光塌缩、和值/高低比例），
+    用于检验算法偏置 —— 绝不预测任何号码下一期的中奖概率。
+
+    Args:
+        candidates: [{"front": [...], "back": [...]}, ...]
+
+    Returns:
+        dict: 分布诊断指标
+    """
+    n = len(candidates)
+    if n == 0:
+        return {"n_candidates": 0}
+
+    front_exposure = Counter()
+    back_exposure = Counter()
+    sums = []
+    front_high = 0
+    back_high = 0
+    all_front = []
+    for c in candidates:
+        f = c["front"]
+        b = c["back"]
+        for x in f:
+            front_exposure[x] += 1
+            all_front.append(x)
+            if x >= 18:
+                front_high += 1
+        for x in b:
+            back_exposure[x] += 1
+            if x >= 7:
+                back_high += 1
+        sums.append(sum(f))
+
+    # 卡方均匀性检验（用于检验曝光是否均匀，非概率预测）
+    from chi_square import chi_square_test
+    front_obs = [front_exposure.get(i, 0) for i in range(1, 36)]
+    front_exp = [n * 5 / 35] * 35
+    back_obs = [back_exposure.get(i, 0) for i in range(1, 13)]
+    back_exp = [n * 2 / 12] * 12
+    front_chi = chi_square_test(front_obs, front_exp)
+    back_chi = chi_square_test(back_obs, back_exp)
+
+    return {
+        "n_candidates": n,
+        "front_exposure": dict(front_exposure),
+        "back_exposure": dict(back_exposure),
+        "front_mean": round(mean(all_front), 4),
+        "front_sum_mean": round(mean(sums), 4),
+        "front_sum_std": round(std(sums), 4),
+        "front_high_ratio": round(front_high / (n * 5), 4),
+        "back_high_ratio": round(back_high / (n * 2), 4),
+        "max_front_exposure_ratio": round(max(front_exposure.values()) / n, 4),
+        "max_back_exposure_ratio": round(max(back_exposure.values()) / n, 4),
+        "chi2_front_p": front_chi["p_value"],
+        "chi2_back_p": back_chi["p_value"],
+    }
+
+
+def distribution_diagnostics(candidates, seed=42):
+    """对候选组合池做分布诊断，并附带严格均匀 Random Baseline 对照。
+
+    Args:
+        candidates: 候选组合列表（通常为 generate_top_candidates 输出）
+        seed: Random Baseline 的固定种子（仅诊断对照用，不影响生产）
+
+    Returns:
+        dict: {"portfolio": ..., "random_baseline": ..., "note": ...}
+    """
+    random_pool = random_baseline_pool(len(candidates), seed=seed)
+    return {
+        "portfolio": portfolio_distribution(candidates),
+        "random_baseline": portfolio_distribution(random_pool),
+        "note": ("分布诊断只描述候选组合池的号码曝光/结构特征（是否均匀、有无曝光塌缩、"
+                  "和值/高低比例），用于算法偏置检验，不预测任何号码下一期的中奖概率。"),
     }
 
 

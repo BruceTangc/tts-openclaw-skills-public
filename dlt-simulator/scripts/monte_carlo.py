@@ -3,7 +3,13 @@
 """
 monte_carlo.py — Monte Carlo 模拟模块
 
-基于历史频率分布进行大规模随机模拟，评估策略预期收益
+基于历史频率分布进行大规模随机模拟，验证策略在“历史频率零模型”下的行为表现。
+
+⚠️ 定位（重构后）：本模块是【策略行为验证】工具，不是中奖概率预测工具。
+   - 它回答的问题是：“在‘下一期号码仍按历史频率分布抽样’这个零模型下，
+     给定策略/组合的长期期望命中分布是什么样子”。
+   - 它【不】预测下一期真实开奖号码，【不】声称任何组合的中奖概率提高。
+   - 大乐透真实开奖为独立均匀随机，历史频率不能描述下一期概率。
 """
 import random
 from collections import Counter
@@ -18,6 +24,10 @@ BACK_MIN = cfg["back_min"]
 BACK_MAX = cfg["back_max"]
 BACK_PICK = cfg["back_pick"]
 MC_ITERATIONS = cfg["monte_carlo_iterations"]
+
+# 统一免责声明：Monte Carlo 是策略行为验证，不是概率预测
+MC_DISCLAIMER = ("Monte Carlo 模拟是策略行为验证：在“下一期号码仍按历史频率分布抽样”的"
+                 "零模型下估计长期期望命中分布，不预测真实开奖号码，不代表任何组合的中奖概率提高。")
 
 
 def frequency_weights(draws, window=None):
@@ -123,6 +133,8 @@ def monte_carlo_batch(user_front, user_back, draws, iterations=None):
     results["tiers"] = dict(results["tiers"])
     results["expected_prize"] = results["total_prize"] / iterations
     results["win_rate"] = results["prize"] / iterations
+    results["method"] = "strategy_behavior_validation"
+    results["disclaimer"] = MC_DISCLAIMER
     return results
 
 
@@ -179,20 +191,45 @@ def simulate_strategy(strategy_func, draws, iterations=None):
     results["tiers"] = dict(results["tiers"])
     results["win_rate"] = results["prize"] / iterations
     results["expected_prize"] = results["total_prize"] / iterations
+    results["method"] = "strategy_behavior_validation"
+    results["disclaimer"] = MC_DISCLAIMER
     return results
+
+
+def validate_strategy_behavior(strategy_func, draws, iterations=None):
+    """验证策略在历史频率零模型下的行为表现（非概率预测）。
+
+    对 simulate_strategy 的显式语义封装：输入策略函数，在“下一期号码按历史频率
+    分布抽样”的零模型下反复模拟，返回长期期望命中分布。结果仅用于描述策略在
+    该零模型下的行为，不预测真实开奖、不代表中奖概率提高。
+
+    Args:
+        strategy_func: 策略函数，接收 draws 返回 (front, back)
+        draws: 历史数据（用于构建频率分布零模型）
+        iterations: 模拟次数（默认取 MC_ITERATIONS//10）
+
+    Returns:
+        dict: 与 simulate_strategy 同结构，含 method/disclaimer 标注
+    """
+    result = simulate_strategy(strategy_func, draws, iterations)
+    result["method"] = "strategy_behavior_validation"
+    result["disclaimer"] = MC_DISCLAIMER
+    return result
 
 
 def format_monte_carlo(result):
     """格式化输出"""
-    lines = ["📊 Monte Carlo 模拟结果"]
+    lines = ["📊 Monte Carlo 模拟结果（策略行为验证）"]
     lines.append(f"  模拟次数: {result['total']:,}")
-    lines.append(f"  中奖率: {result['win_rate']*100:.4f}%")
-    lines.append(f"  预期每注奖金: ¥{result['expected_prize']:.2f}")
+    lines.append(f"  中奖率(零模型): {result['win_rate']*100:.4f}%")
+    lines.append(f"  预期每注奖金(零模型): ¥{result['expected_prize']:.2f}")
     lines.append(f"  投注成本: ¥{result['total']*2:,}")
-    lines.append(f"  期望回报: ¥{result['total_prize']:,.0f}")
+    lines.append(f"  期望回报(零模型): ¥{result['total_prize']:,.0f}")
     if result['total'] * 2 > 0:
         roi = result['total_prize'] / (result['total'] * 2) * 100
-        lines.append(f"  回报率: {roi:.2f}%")
+        lines.append(f"  回报率(零模型): {roi:.2f}%")
+    lines.append("")
+    lines.append(f"  ⚠️ {result.get('disclaimer', MC_DISCLAIMER)}")
     return "\n".join(lines)
 
 

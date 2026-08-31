@@ -157,10 +157,15 @@ check("评分权重未变(frequency>其他)", scores["total"] > 0)
 # 4.3 Top10 生成 / 过滤 / Top2
 top = generate_top_candidates(draws, "balanced", top_n=10, pool_size=200)
 check("Balanced Top10 生成", len(top) == 10, f"len={len(top)}")
-check("Top2 排序正确(score降序)",
-      all(top[i]["score"] >= top[i + 1]["score"] for i in range(len(top) - 1)))
-check("候选含 front/back/score/rank", all(
-    {"front", "back", "score", "rank"}.issubset(c.keys()) for c in top))
+# 回归修复：曝光校准会让 adjusted_score = score - exposure_penalty 决定最终排序，
+# 因此“排序正确”的不变量应校验 adjusted_score 单调（raw score 可能因多样性惩罚不再单调）。
+check("Top2 排序正确(adjusted_score降序)",
+      all(top[i]["adjusted_score"] >= top[i + 1]["adjusted_score"] for i in range(len(top) - 1)))
+check("候选含 front/back/score/rank/adjusted_score/exposure_penalty", all(
+    {"front", "back", "score", "rank", "adjusted_score", "exposure_penalty"}.issubset(c.keys()) for c in top))
+check("曝光惩罚非负且 adjusted=score-penalty", all(
+    c["exposure_penalty"] >= 0 and abs(c["adjusted_score"] - (c["score"] - c["exposure_penalty"])) < 1e-4
+    for c in top))
 
 # 4.4 每个策略都能生成候选
 for strat in ["hot", "cold", "trend"]:

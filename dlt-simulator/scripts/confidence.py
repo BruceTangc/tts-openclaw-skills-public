@@ -102,7 +102,14 @@ def frequency_ci(draws, window=None):
         count = front_freq.get(n, 0)
         p_hat = count / total
         ci_low, ci_high = wilson_ci(count, total)
-        is_abnormal = p_hat < ci_low or p_hat > ci_high
+        # 判断逻辑：Wilson CI 本身围绕观察频率 p_hat 构造，因此 p_hat 必然落在 CI 内。
+        # 应检验【理论期望概率】是否落在观察频率对应的置信区间外：
+        #   expected(5/35) < ci_low → 观察频率显著高于理论（heat）
+        #   expected(5/35) > ci_high → 观察频率显著低于理论（cold）
+        # 落在区间内 → 观察频率与理论无显著差异。
+        abnormal_high = front_expected < ci_low
+        abnormal_low = front_expected > ci_high
+        is_abnormal = abnormal_high or abnormal_low
         front_result[n] = {
             "observed": count,
             "frequency": round(p_hat, 4),
@@ -110,6 +117,7 @@ def frequency_ci(draws, window=None):
             "ci_lower": round(ci_low, 4),
             "ci_upper": round(ci_high, 4),
             "is_abnormal": is_abnormal,
+            "abnormal_direction": "high" if abnormal_high else ("low" if abnormal_low else "normal"),
             "deviation": round(p_hat - front_expected, 4),
         }
 
@@ -118,7 +126,9 @@ def frequency_ci(draws, window=None):
         count = back_freq.get(n, 0)
         p_hat = count / total
         ci_low, ci_high = wilson_ci(count, total)
-        is_abnormal = p_hat < ci_low or p_hat > ci_high
+        abnormal_high = back_expected < ci_low
+        abnormal_low = back_expected > ci_high
+        is_abnormal = abnormal_high or abnormal_low
         back_result[n] = {
             "observed": count,
             "frequency": round(p_hat, 4),
@@ -126,6 +136,7 @@ def frequency_ci(draws, window=None):
             "ci_lower": round(ci_low, 4),
             "ci_upper": round(ci_high, 4),
             "is_abnormal": is_abnormal,
+            "abnormal_direction": "high" if abnormal_high else ("low" if abnormal_low else "normal"),
             "deviation": round(p_hat - back_expected, 4),
         }
 
@@ -133,17 +144,17 @@ def frequency_ci(draws, window=None):
 
 
 def abnormal_numbers(ci_result):
-    """提取异常号码（频率偏离置信区间的）"""
+    """提取异常号码（观察频率偏离理论期望，即理论值落在 CI 外）"""
     abnormals = {"front_high": [], "front_low": [], "back_high": [], "back_low": []}
     for n, info in ci_result.get("front", {}).items():
         if info["is_abnormal"]:
-            if info["deviation"] > 0:
+            if info["abnormal_direction"] == "high":
                 abnormals["front_high"].append((n, info["deviation"]))
             else:
                 abnormals["front_low"].append((n, abs(info["deviation"])))
     for n, info in ci_result.get("back", {}).items():
         if info["is_abnormal"]:
-            if info["deviation"] > 0:
+            if info["abnormal_direction"] == "high":
                 abnormals["back_high"].append((n, info["deviation"]))
             else:
                 abnormals["back_low"].append((n, abs(info["deviation"])))

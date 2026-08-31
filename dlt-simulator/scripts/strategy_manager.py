@@ -26,10 +26,61 @@ STRATEGY_FILE = STRATEGY_DIR / "current_strategy.json"
 HISTORY_DIR = STRATEGY_DIR / "strategy_history"
 
 
+# balanced 弱修正参数默认值（从 config 回退；策略 params 可覆盖）
+_BALANCED_PARAM_DEFAULTS = {
+    "balanced_hot_adjust": 0.06,
+    "balanced_cold_adjust": 0.08,
+    "balanced_trend_adjust": 0.05,
+    "balanced_omission_adjust": 0.10,
+    "balanced_max_total_adjust": 0.20,
+    "exposure_penalty_coef": 0.04,
+}
+
+
+def default_strategy_params():
+    """返回默认策略参数（含 balanced 弱修正参数，值从 config 回退）。"""
+    params = {
+        "hot_weight": 1.5,
+        "cold_weight": 1.0,
+        "trend_weight": 0.5,
+        "omission_bonus": 1.0,
+    }
+    for k, default in _BALANCED_PARAM_DEFAULTS.items():
+        params[k] = cfg.get(k, default)
+    return params
+
+
+def get_generator_params(strategy=None):
+    """解析生成器实际使用的策略参数（闭环入口）。
+
+    从当前策略 params 取值，缺失的字段回退到 config 默认值。这样
+    hot_weight/cold_weight/trend_weight/omission_bonus 以及 balanced_*_adjust
+    都能真正传入 generator.compute_weights / score_candidate，任何 adjust 后
+    新参数都会影响后续生成。
+
+    Args:
+        strategy: 策略对象（None 则加载当前策略）
+
+    Returns:
+        dict: 完整的生成器参数
+    """
+    if strategy is None:
+        strategy = load_current_strategy()
+    params = dict(strategy.get("params", {}) or {})
+    defaults = default_strategy_params()
+    for k, default in defaults.items():
+        params.setdefault(k, default)
+    return params
+
+
 def load_current_strategy():
     """加载当前策略"""
     data = load_json(STRATEGY_FILE)
     if data:
+        # 补齐缺失的 balanced 弱修正参数（向后兼容旧策略文件）
+        data.setdefault("params", {})
+        for k, default in default_strategy_params().items():
+            data["params"].setdefault(k, default)
         return data
     # 默认策略
     default = {
@@ -38,12 +89,7 @@ def load_current_strategy():
         "created": datetime.now().isoformat(),
         "updated": datetime.now().isoformat(),
         "status": "active",
-        "params": {
-            "hot_weight": 1.5,
-            "cold_weight": 1.0,
-            "trend_weight": 0.5,
-            "omission_bonus": 1.0,
-        },
+        "params": default_strategy_params(),
         "performance": {
             "top2_accuracy": 0.0,
             "any_accuracy": 0.0,
@@ -166,10 +212,9 @@ def adjust_strategy(strategy, adjustment_type="auto"):
     elif adjustment_type == "trend_boost":
         params["trend_weight"] = min(2.0, params.get("trend_weight", 0.5) + 0.3)
     elif adjustment_type == "balance":
-        params["hot_weight"] = 1.5
-        params["cold_weight"] = 1.0
-        params["trend_weight"] = 0.5
-        params["omission_bonus"] = 1.0
+        # 重置为默认参数（含 balanced 弱修正参数，从 config 回退）
+        for k, v in default_strategy_params().items():
+            params[k] = v
     elif adjustment_type == "auto":
         # 自动调整：根据表现数据决定
         perf = strategy.get("performance", {})
