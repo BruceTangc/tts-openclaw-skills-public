@@ -36,6 +36,39 @@ _BALANCED_PARAM_DEFAULTS = {
     "exposure_penalty_coef": 0.04,
 }
 
+# Balanced 自动调参约束（保守区间 + 单步长）。
+# 只改 Balanced.compute_weights() 实际读取的参数；balanced_max_total_adjust
+# 原则上不自动频繁改（除非有充分统计证据），故默认步长 0。
+_BALANCED_PARAM_STEPS = {
+    "balanced_hot_adjust": 0.01,
+    "balanced_cold_adjust": 0.01,
+    "balanced_trend_adjust": 0.01,
+    "balanced_omission_adjust": 0.01,
+    "balanced_max_total_adjust": 0.0,   # 默认不动，需显式证据
+    "exposure_penalty_coef": 0.005,
+}
+# 保守参数范围（可配置不散落硬编码）
+_BALANCED_PARAM_RANGES = {
+    "balanced_hot_adjust": (0.00, 0.12),
+    "balanced_cold_adjust": (0.00, 0.15),
+    "balanced_trend_adjust": (0.00, 0.10),
+    "balanced_omission_adjust": (0.00, 0.15),
+    "balanced_max_total_adjust": (0.00, 0.25),  # 界上限，但默认步长0避免频繁改
+    "exposure_penalty_coef": (0.00, 0.08),
+}
+
+# 归因样本阈值：样本 < 此值时禁止据此自动调参（标注 INSUFFICIENT_DATA）
+ATTRIBUTION_MIN_SAMPLE = 30
+
+# 归因 effect 与可调 Balanced 参数的映射（effect 名 → 参数名）
+_BALANCED_EFFECT_PARAM = {
+    "hot_effect": "balanced_hot_adjust",
+    "cold_effect": "balanced_cold_adjust",
+    "trend_effect": "balanced_trend_adjust",
+    "omission_effect": "balanced_omission_adjust",
+    "exposure_penalty_effect": "exposure_penalty_coef",
+}
+
 
 def default_strategy_params():
     """返回默认策略参数（含 balanced 弱修正参数，值从 config 回退）。"""
@@ -118,19 +151,29 @@ def save_strategy_snapshot(strategy, reason="snapshot"):
     return filepath
 
 
+def _significance_block(success, fail, tie):
+    """对 SUCCESS/FAIL（TIE 不计入 n）做 p0=0.20 的 exact binomial 检验。
+
+    替代旧的固定阈值：RANDOM_TOP2_BASELINE / SIGNIFICANT_MARGIN / under_random=top2_acc<0.1。
+    """
+    from stat_rigor import significance_vs_random
+    return significance_vs_random(success, fail, p0=RANDOM_TOP2_BASELINE, tie=tie)
+
+
 def evaluate_strategy(strategy, performance_data):
     """
-    评估策略表现，决定操作：KEEP / ADJUST / REVERT
+    评估策略表现，决定操作：KEEP / ADJUST / REVERT（exact binomial vs p=0.20）
 
     Args:
         strategy: 当前策略
-        performance_data: 策略表现数据
+        performance_data: 策略表现数据（含 success/fail/tie 或由 total_runs/top2_accuracy 折算）
 
     Returns:
         dict: {
             "action": "KEEP" | "ADJUST" | "REVERT",
             "reason": str,
-            "details": dict
+            "details": dict,
+            "significance": dict,   # exact binomial 检验结果
         }
     """
     total_runs = performance_data.get("total_runs", 0)
@@ -138,70 +181,179 @@ def evaluate_strategy(strategy, performance_data):
     win_rate = performance_data.get("win_rate", 0)
     roi = performance_data.get("roi", 0)
 
+    # 从 performance_data 中优先取 SUCCESS/FAIL/TIE（评审按 prediction version 记账后可直接提供）
+    success = performance_data.get("success", None)
+    fail = performance_data.get("fail", None)
+    tie = performance_data.get("tie", 0)
+
+    if success is not None and fail is not None:
+        sig = _significance_block(success, fail, tie)
+        n_valid = sig["valid_samples"]
+    else:
+        # 兼容旧调用方（仅给 total_runs/top2_accuracy）：把 top2_acc 折算成 success
+        n_valid = int(total_runs)
+        est_success = int(round(top2_acc * n_valid))
+        est_fail = n_valid - est_success
+        sig = _significance_block(est_success, est_fail, 0)
+        # 真实 SUCCESS/FAIL 仅在 review 提供时可用
+        sig["success"] = est_success
+        sig["fail"] = est_fail
+        sig["tie"] = tie
+
+    observed = sig["observed_top2_accuracy"]
+    p_value = sig["p_value"]
+    alpha = 0.05
+
     # 样本不足，保持（不触发任何调整）
-    if total_runs < MIN_SAMPLE:
+    if n_valid < MIN_SAMPLE:
         return {
             "action": "KEEP",
-            "reason": f"样本不足（{total_runs}/{MIN_SAMPLE}），继续观察",
-            "details": {"runs": total_runs, "required": MIN_SAMPLE},
+            "reason": f"样本不足（{n_valid}/{MIN_SAMPLE}），继续观察",
+            "details": {"valid_samples": n_valid, "required": MIN_SAMPLE},
+            "significance": sig,
         }
 
-    # 显著差阈值：Top-2 准确性严格低于随机基线（含容差）才算"跑不赢随机"
-    # 只有在此前提下，跑满阈值次数才可能 ADJUST/REVERT，杜绝"跑满次数就无条件调"
-    under_random = top2_acc < RANDOM_TOP2_BASELINE * (1 - SIGNIFICANT_MARGIN)
+    significantly_below = sig["significantly_below_random"]
 
-    # REVERT：达标长期观察且显著低于随机（且绝对水平很低）→ 回退到默认
-    if total_runs >= CONFIRM_SAMPLE and under_random and top2_acc < 0.05:
+    # REVERT：达标长期观察 且 显著低于随机（p<0.01）且绝对水平很低
+    if n_valid >= CONFIRM_SAMPLE and p_value < 0.01 and observed < RANDOM_TOP2_BASELINE * 0.5:
         return {
             "action": "REVERT",
-            "reason": (f"长期表现显著低于随机基线：Top-2 Acc={top2_acc*100:.2f}% "
-                        f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%)，ROI={roi:.1f}%，建议回退到默认策略"),
+            "reason": (f"exact binomial 判定长期显著低于随机基线：Top-2 Acc={observed*100:.2f}% "
+                        f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%, p={p_value:.4f}<0.01)，建议回退"),
             "details": {
-                "top2_accuracy": top2_acc, "roi": roi, "win_rate": win_rate,
-                "random_baseline": RANDOM_TOP2_BASELINE, "total_runs": total_runs,
+                "top2_accuracy": observed, "roi": roi, "win_rate": win_rate,
+                "random_baseline": RANDOM_TOP2_BASELINE, "valid_samples": n_valid,
             },
+            "significance": sig,
         }
 
-    # ADJUST：达标调整样本且显著低于随机基线 → 才调整（不再"跑满次数就无条件调"）
-    if total_runs >= ADJUST_SAMPLE and under_random:
+    # ADJUST：达标调整样本 且 显著低于随机（p<0.05）
+    if n_valid >= ADJUST_SAMPLE and p_value < alpha and significantly_below:
         return {
             "action": "ADJUST",
-            "reason": (f"表现显著低于随机基线：Top-2 Acc={top2_acc*100:.2f}% "
-                        f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%)，ROI={roi:.1f}%，建议调整策略"),
+            "reason": (f"exact binomial 判定显著低于随机基线：Top-2 Acc={observed*100:.2f}% "
+                        f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%, p={p_value:.4f}<{alpha})"),
             "details": {
-                "top2_accuracy": top2_acc, "roi": roi, "win_rate": win_rate,
-                "random_baseline": RANDOM_TOP2_BASELINE, "total_runs": total_runs,
+                "top2_accuracy": observed, "roi": roi, "win_rate": win_rate,
+                "random_baseline": RANDOM_TOP2_BASELINE, "valid_samples": n_valid,
             },
+            "significance": sig,
         }
 
-    # 默认 KEEP：达标样本但不显著差 / 未达调整阈值，保持观察
+    # 默认 KEEP：达标样本但不显著差 / 未达调整阈值
     return {
         "action": "KEEP",
-        "reason": (f"表现正常/中性：Top-2 Acc={top2_acc*100:.2f}% "
-                    f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%)，ROI={roi:.1f}%，{total_runs}次运行"),
+        "reason": (f"表现正常/中性或不显著：Top-2 Acc={observed*100:.2f}% "
+                    f"(随机基线≈{RANDOM_TOP2_BASELINE*100:.0f}%, p={p_value:.4f})，{n_valid}次运行"),
         "details": {
-            "top2_accuracy": top2_acc, "roi": roi, "win_rate": win_rate,
-            "random_baseline": RANDOM_TOP2_BASELINE, "total_runs": total_runs,
+            "top2_accuracy": observed, "roi": roi, "win_rate": win_rate,
+            "random_baseline": RANDOM_TOP2_BASELINE, "valid_samples": n_valid,
         },
+        "significance": sig,
     }
 
 
-def adjust_strategy(strategy, adjustment_type="auto"):
+def _clamp_param(value, pmin, pmax):
+    return max(pmin, min(pmax, value))
+
+
+def _select_effect_targets(attribution, strategy):
+    """从归因结果选出本次最多改 1~2 个 Balanced 参数（数据驱动，不拍脑袋）。
+
+    规则：
+      - 只有 sample_count >= ATTRIBUTION_MIN_SAMPLE 且非 INSUFFICIENT_DATA 的 effect 可入选。
+      - 按“表现差于随机”的方向性（负向 effect）排序，优先调强负向最重的 effect。
+      - 每个 effect 对应一个 balanced_* 参数；balanced_max_total_adjust 默认步长0且
+        除非有充分统计证据否则不选。
+      - 多个 effect 同现标记 confounded=True（不假装完全分离因果）。
+
+    Args:
+        attribution: dict，形如 {"hot_effect": {...}, ...}，每项含
+                     sample_count / top2_success_rate（或 mean_front_hit/mean_back_hit）
+        strategy: 当前策略（用于读现状参数）
+
+    Returns:
+        list[(param_name, direction)]：direction in (+1, -1)，升序列出候选
     """
-    调整策略参数
+    candidates = []
+    for effect, param in _BALANCED_EFFECT_PARAM.items():
+        info = (attribution or {}).get(effect) or {}
+        if not info:
+            continue
+        if info.get("status") == "INSUFFICIENT_DATA" or info.get("sample_count", 0) < ATTRIBUTION_MIN_SAMPLE:
+            continue
+        # 仅当该 effect 有实际样本时才考虑；这里不做复杂因果，只用方向性：
+        # top2_success_rate 明显低于随机基线(0.20)时，对应的参数需要调整。
+        rate = info.get("top2_success_rate")
+        if rate is None:
+            continue
+        if rate < RANDOM_TOP2_BASELINE * 0.7:  # 明显跑不赢随机才触发方向
+            candidates.append((param, +1))
+    # 最多选 2 个：按 effect 顺序去重，避免一次全面漂移
+    selected = []
+    seen = set()
+    for param, direction in candidates:
+        if param in seen:
+            continue
+        seen.add(param)
+        selected.append((param, direction))
+        if len(selected) >= 2:
+            break
+    return selected
+
+
+def adjust_strategy(strategy, adjustment_type="auto", attribution=None):
+    """
+    调整策略参数（按 strategy.name 分支，Balanced 只改 Balanced 真正使用的参数）
+
+    - hot/cold/trend + hot_boost/cold_boost/trend_boost/balance：沿用旧逻辑。
+    - strategy.name == balanced + "auto"：**不得只改 hot_weight**。必须只调整
+      compute_weights() 实际读取的 balanced_* / exposure_penalty_coef，且由数据驱动
+      （attribution result → 选 effect → 小步 patch），小步/带上下限/可回退/最多1~2个。
 
     Args:
         strategy: 当前策略
-        adjustment_type: 调整类型
+        adjustment_type: "auto" | "hot_boost" | "cold_boost" | "trend_boost" | "balance"
+        attribution: 归因汇总（仅 balanced auto 用）。若为空/样本不足则退化为稳定化
+                     (nudge 到更保守区间)而非乱调。
 
     Returns:
         dict: 调整后的策略
     """
     new_strategy = {**strategy}
+    name = new_strategy.get("name", "balanced")
     new_strategy["version"] = strategy.get("version", 1) + 1
     new_strategy["params"] = {**strategy.get("params", {})}
 
     params = new_strategy["params"]
+
+    # Balanced 的分支：auto 只调 Balanced 真正使用的参数，不碰 hot_weight
+    if name == "balanced" and adjustment_type == "auto":
+        patches = _select_effect_targets(attribution, strategy)
+        changed = []
+        adjustments = []
+        for param, direction in patches:
+            lo, hi = _BALANCED_PARAM_RANGES.get(param, (0.0, 1.0))
+            step = _BALANCED_PARAM_STEPS.get(param, 0.01)
+            if step <= 0:
+                continue  # 默认不动 balanced_max_total_adjust
+            cur = float(params.get(param, _BALANCED_PARAM_DEFAULTS.get(param, 0.0)))
+            new_val = _clamp_param(cur + direction * step, lo, hi)
+            if abs(new_val - cur) > 1e-12:
+                params[param] = round(new_val, 4)
+                changed.append(param)
+                adjustments.append({"param": param, "from": round(cur, 4), "to": new_val})
+        new_strategy["params"] = params
+        new_strategy["status"] = "active"
+        new_strategy["last_adjustment"] = {
+            "reason": "balanced auto adjust (exact binomial 显著低于随机 + 归因驱动)",
+            "changed": changed,
+            "adjustments": adjustments,
+            "timestamp": datetime.now().isoformat(),
+        }
+        new_strategy["adjustment_log"] = new_strategy.get("adjustment_log", []) + [adjustments]
+        return new_strategy
 
     if adjustment_type == "hot_boost":
         params["hot_weight"] = min(3.0, params.get("hot_weight", 1.5) + 0.3)
@@ -216,7 +368,7 @@ def adjust_strategy(strategy, adjustment_type="auto"):
         for k, v in default_strategy_params().items():
             params[k] = v
     elif adjustment_type == "auto":
-        # 自动调整：根据表现数据决定
+        # 非 balanced 的 auto（hot/cold/trend）：沿用旧逻辑（只改 legacy 权重）
         perf = strategy.get("performance", {})
         if perf.get("top2_accuracy", 0) < 0.005:
             params["hot_weight"] = min(3.0, params.get("hot_weight", 1.5) + 0.2)

@@ -146,6 +146,7 @@ def generate_prediction(strategy_name=None, prediction_count=None):
     # 策略参数闭环：把 current_strategy.params 真实传入生成器（hot/cold/trend/omission
     # 权重及 balanced 弱修正参数），任何 adjust 后的参数都会影响本次生成。
     params = get_generator_params(strategy_info)
+    strategy_version = strategy_info.get("version", 1)
 
     # 3. 统计分析
     stats = full_statistics(draws)
@@ -211,6 +212,11 @@ def generate_prediction(strategy_name=None, prediction_count=None):
         "time": datetime.now().strftime("%H:%M:%S"),
         "issue": next_issue,
         "strategy": strategy_name,
+        "strategy_version": strategy_version,
+        "strategy_params": {
+            k: (v if not isinstance(v, (dict, list)) else v)
+            for k, v in params.items()
+        },
         "buy": [
             {
                 "front": c["front"],
@@ -219,6 +225,8 @@ def generate_prediction(strategy_name=None, prediction_count=None):
                 "score": c.get("score", 0),
                 "adjusted_score": c.get("adjusted_score", c.get("score", 0)),
                 "exposure_penalty": c.get("exposure_penalty", 0),
+                "components": c.get("components", {}),
+                "strategy_effects": c.get("strategy_effects", {}),
                 "label": "BUY",
             }
             for i, c in enumerate(buy)
@@ -231,6 +239,8 @@ def generate_prediction(strategy_name=None, prediction_count=None):
                 "score": c.get("score", 0),
                 "adjusted_score": c.get("adjusted_score", c.get("score", 0)),
                 "exposure_penalty": c.get("exposure_penalty", 0),
+                "components": c.get("components", {}),
+                "strategy_effects": c.get("strategy_effects", {}),
                 "label": "WATCH",
             }
             for i, c in enumerate(watch)

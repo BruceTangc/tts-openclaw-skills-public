@@ -652,6 +652,139 @@ def finalize_portfolio(candidates, prediction_count, backend_calibrate=True, pen
     return out[:prediction_count]
 
 
+def strategy_effects_for_draws(draws, window=None):
+    """对一段历史计算各号码按 Balanced 修正触发的 effect 标记主（内部工具）。
+
+    Balanced 的弱修正仅在满足统计证据时生效；本函数为每个前区/后区号码记录
+    哪些修正实际打开了（heat/cold/trend/omission），供候选级 strategy_effects 归因。
+
+    Returns:
+        dict: {
+            "front": {num: {"hot": bool, "cold": bool, "trend": bool, "omission": bool}},
+            "back":  {...},
+        }
+    """
+    data = draws[:window] if window else draws
+    if not data:
+        return {"front": {}, "back": {}}
+    front_freq = Counter()
+    back_freq = Counter()
+    front_last = {}
+    back_last = {}
+    for i, d in enumerate(data):
+        for n in d["front"]:
+            front_freq[n] += 1
+            front_last.setdefault(n, i)
+        for n in d["back"]:
+            back_freq[n] += 1
+            back_last.setdefault(n, i)
+    total = len(data)
+
+    recent_n = min(20, total)
+    recent = data[:recent_n]
+    older = data[recent_n:]
+    recent_freq = Counter()
+    older_freq = Counter()
+    recent_back = Counter()
+    older_back = Counter()
+    for d in recent:
+        for n in d["front"]:
+            recent_freq[n] += 1
+        for n in d["back"]:
+            recent_back[n] += 1
+    for d in older:
+        for n in d["front"]:
+            older_freq[n] += 1
+        for n in d["back"]:
+            older_back[n] += 1
+
+    rising = set()
+    for n in range(FRONT_MIN, FRONT_MAX + 1):
+        r = recent_freq.get(n, 0) / max(1, recent_n)
+        o = older_freq.get(n, 0) / max(1, len(older))
+        if r > o * 1.3 and r > 0.02:
+            rising.add(n)
+    rising_back = set()
+    for n in range(BACK_MIN, BACK_MAX + 1):
+        r = recent_back.get(n, 0) / max(1, recent_n)
+        o = older_back.get(n, 0) / max(1, len(older))
+        if r > o * 1.3 and r > 0.02:
+            rising_back.add(n)
+
+    front_ci = None
+    back_ci = None
+    front_chi = None
+    back_chi = None
+    if total >= 20:
+        try:
+            from chi_square import front_chi_square, back_chi_square
+            from confidence import frequency_ci
+            front_chi = front_chi_square(data)
+            back_chi = back_chi_square(data)
+            ci = frequency_ci(data)
+            front_ci = ci.get("front", {})
+            back_ci = ci.get("back", {})
+        except Exception:
+            front_chi = back_chi = None
+            front_ci = back_ci = None
+
+    def _front(n):
+        info = front_ci.get(n) if front_ci else None
+        hot = bool(front_chi and front_chi.get("is_reject") and info
+                   and info.get("abnormal_direction") == "high")
+        cold = bool(info and info.get("abnormal_direction") == "low")
+        trend = n in rising
+        miss = front_last.get(n, total)
+        omission = miss > FRONT_OMISSION_TARGET
+        return {"hot": hot, "cold": cold, "trend": trend, "omission": omission}
+
+    def _back(n):
+        info = back_ci.get(n) if back_ci else None
+        hot = bool(back_chi and back_chi.get("is_reject") and info
+                   and info.get("abnormal_direction") == "high")
+        cold = bool(info and info.get("abnormal_direction") == "low")
+        trend = n in rising_back
+        miss = back_last.get(n, total)
+        omission = miss > BACK_OMISSION_TARGET
+        return {"hot": hot, "cold": cold, "trend": trend, "omission": omission}
+
+    return {
+        "front": {n: _front(n) for n in range(FRONT_MIN, FRONT_MAX + 1)},
+        "back": {n: _back(n) for n in range(BACK_MIN, BACK_MAX + 1)},
+    }
+
+
+def strategy_effects_for_candidate(front, back, effects_flags):
+    """计算一个候选组号码实际受哪些 Balanced 策略修正影响（归因用，非概率）。
+
+    Args:
+        front: 前区号码列表
+        back: 后区号码列表
+        effects_flags: strategy_effects_for_draws 的返回（front/back 每号 effect 标记）
+
+    Returns:
+        dict: {"hot_adjust": bool, "cold_adjust": bool, "trend_adjust": bool,
+               "omission_adjust": bool}
+             每项表示该组号码中是否有号码实际命中对应修正。
+    """
+    f_flags = effects_flags.get("front", {})
+    b_flags = effects_flags.get("back", {})
+    hot = cold = trend = omission = False
+    for n in list(front) + list(back):
+        fl = f_flags.get(n) or b_flags.get(n) or {}
+        hot = hot or bool(fl.get("hot"))
+        cold = cold or bool(fl.get("cold"))
+        trend = trend or bool(fl.get("trend"))
+        omission = omission or bool(fl.get("omission"))
+    # hot 只看前区（后区同语义可不放大）；这里统一按“是否命中”记 bool
+    return {
+        "hot_adjust": hot,
+        "cold_adjust": cold,
+        "trend_adjust": trend,
+        "omission_adjust": omission,
+    }
+
+
 def generate_top_candidates(draws, strategy="balanced", top_n=10, pool_size=None, params=None):
     """
     完整流程：生成候选池 → 评分 → 过滤 → (balanced)曝光校准 → 取Top N
@@ -672,13 +805,20 @@ def generate_top_candidates(draws, strategy="balanced", top_n=10, pool_size=None
         # 曝光校准：返回 (front, back, raw_score, adjusted_score, penalty)
         filtered = calibrate_portfolio(filtered, top_n,
                                        penalty_coef=(params or {}).get("exposure_penalty_coef"))
+        effects_flags = strategy_effects_for_draws(draws)
     else:
         # 非 balanced 无曝光惩罚：adjusted_score == raw_score, penalty == 0
         filtered = [(f, b, s, s, 0.0) for (f, b, s) in filtered]
+        effects_flags = None
     top = filtered[:top_n]
 
-    return [
-        {
+    # 归因附件：为最终返回的每个候选补充
+    #   components       —— 各评分维度原始分（sum/odd_even/zone/high_low/frequency/omission）
+    #   strategy_effects —— 该组号码实际受哪些 Balanced 策略修正影响（非概率）
+    freq_all = _build_freq(draws)
+    out = []
+    for i, (f, b, raw, adj, pen) in enumerate(top):
+        entry = {
             "front": f,
             "back": b,
             "score": raw,
@@ -686,8 +826,29 @@ def generate_top_candidates(draws, strategy="balanced", top_n=10, pool_size=None
             "exposure_penalty": pen,
             "rank": i + 1,
         }
-        for i, (f, b, raw, adj, pen) in enumerate(top)
-    ]
+        try:
+            comp, _ = _score_dimensions(f, b, draws, freq=freq_all, params=params)
+            entry["components"] = {
+                "sum": comp.get("sum", 0.0),
+                "odd_even": comp.get("odd_even", 0.0),
+                "zone": comp.get("zone", 0.0),
+                "high_low": comp.get("high_low", 0.0),
+                "frequency": comp.get("frequency", 0.0),
+                "omission": comp.get("omission", 0.0),
+            }
+        except Exception:
+            entry["components"] = {}
+        if effects_flags is not None:
+            entry["strategy_effects"] = strategy_effects_for_candidate(f, b, effects_flags)
+            entry["strategy_effects"]["exposure_penalty_effect"] = (pen > 0)
+        else:
+            entry["strategy_effects"] = {
+                "hot_adjust": False, "cold_adjust": False,
+                "trend_adjust": False, "omission_adjust": False,
+                "exposure_penalty_effect": (pen > 0),
+            }
+        out.append(entry)
+    return out
 
 
 if __name__ == "__main__":

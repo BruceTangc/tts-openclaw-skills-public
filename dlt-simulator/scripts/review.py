@@ -133,6 +133,8 @@ def review():
         "prediction_issue": pred_issue,
         "draw_issue": draw_issue,
         "strategy": prediction.get("strategy", "balanced"),
+        "strategy_version": prediction.get("strategy_version", None),
+        "strategy_params": prediction.get("strategy_params", {}),
         "draw_front": latest["front"],
         "draw_back": latest["back"],
         "results": check_result["results"],
@@ -145,6 +147,9 @@ def review():
         "watch_count": len(prediction.get("watch", [])),
         "timestamp": datetime.now().isoformat(),
     }
+
+    # 6.1 归因结果（Fix2）：结合每个候选的 strategy_effects 与本期开奖，累计方向性归因
+    review_result["attribution"] = _build_attribution(review_result, prediction)
 
     # 7. 保存复盘结果
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -217,36 +222,44 @@ def _run_strategy_loop(review_result):
         )
         strategy = load_current_strategy()
 
-        # 累计各策略表现（含 Top-2 指标）由 _update_performance 更新，这里评估当前策略
+        # 累计各策略表现（含 Top-2 指标）由 _update_performance 更新。
         history = load_performance_history()
-        current_strategy_name = review_result.get("strategy", strategy.get("name", "balanced"))
-        current_version = strategy.get("version", 1)
-        key = f"{current_strategy_name}_v{current_version}"
+        # 关键：performance 账户必须以 prediction.strategy + prediction.strategy_version 为准，
+        # 不能拿“当前 current_strategy.version”倒推历史预测的版本（历史快照不可被后续变动污染）。
+        strategy_name = review_result.get("strategy", strategy.get("name", "balanced"))
+        version = review_result.get("strategy_version")
+        if version is None:
+            # 兼容旧预测快照（无 strategy_version）时回退到当前策略版本
+            version = strategy.get("version", 1)
+        key = f"{strategy_name}_v{version}"
         perf = history["strategies"].get(key, {})
 
         s = perf.get("success", 0)
         f = perf.get("fail", 0)
+        tie = perf.get("tie", 0)
         runs = perf.get("total_runs", 0)
         wins = perf.get("total_wins", 0)
-        # 真实 Top-2 准确性（累计 selection_accuracy，0~1 分数）
         sel_acc = perf.get("selection_accuracy", 0)
         # 真实 ROI（当期实际投注/奖金回报，%）：作为辅助信号，不单独触发 ADJUST
         total_bet = review_result.get("total_bet", 0)
         total_prize = review_result.get("total_prize", 0)
         roi = ((total_prize - total_bet) / total_bet * 100) if total_bet > 0 else 0.0
-        # #8 修复：补传 top2_accuracy 与 roi，使 evaluate_strategy 可据真实表现判定，
-        # 不再因缺字段恒为 0 而"跑满 50 次后无条件 ADJUST"。
+        # 传给 evaluate_strategy 真实 SUCCESS/FAIL/TIE（exact binomial 用）
         perf_data = {
             "total_runs": runs,
             "win_rate": (wins / runs * 100) if runs > 0 else 0,
             "top2_accuracy": sel_acc,
             "roi": roi,
+            "success": s,
+            "fail": f,
+            "tie": tie,
         }
         eval_result = evaluate_strategy(strategy, perf_data)
         action = eval_result.get("action", "KEEP")
+        # 附上归因快照，便于审计
+        eval_result["attribution"] = review_result.get("attribution") or {}
 
         if action == "KEEP":
-            # 更新当前策略表现（含 Selection Accuracy 累计）
             perf_out = {
                 "top2_accuracy": sel_acc,
                 "any_accuracy": 0.0,
@@ -254,13 +267,14 @@ def _run_strategy_loop(review_result):
                 "win_count": perf.get("win_count", 0),
                 "success": s,
                 "fail": f,
-                "tie": perf.get("tie", 0),
+                "tie": tie,
             }
             strategy["performance"] = perf_out
             save_current_strategy(strategy)
         elif action == "ADJUST":
             save_strategy_snapshot(strategy, reason="auto_adjust_before")
-            new_strategy = adjust_strategy(strategy, "auto")
+            new_strategy = adjust_strategy(strategy, "auto",
+                                           attribution=review_result.get("attribution") or {})
             save_current_strategy(new_strategy)
             eval_result["new_version"] = new_strategy.get("version")
         elif action == "REVERT":
@@ -273,6 +287,116 @@ def _run_strategy_loop(review_result):
         return eval_result
     except Exception as e:
         return {"action": "ERROR", "reason": str(e)}
+
+
+_ATTRIBUTION_KEYS = ["hot_effect", "cold_effect", "trend_effect", "omission_effect", "exposure_penalty_effect"]
+_EFFECT_FLAG_MAP = {
+    "hot_effect": "hot_adjust",
+    "cold_effect": "cold_adjust",
+    "trend_effect": "trend_adjust",
+    "omission_effect": "omission_adjust",
+    "exposure_penalty_effect": "exposure_penalty_effect",
+}
+
+
+def _build_attribution(review_result, prediction):
+    """构建本期的轻量参数效果归因（Fix2，不做精确因果/非预测概率）。
+
+    对 BUY/WATCH 中每个候选：读取其 strategy_effects（该组号码实际受哪些
+    Balanced 修正影响），与本期开奖命中结合，产出每类 effect 的样本级观察：
+      samples / mean_front_hit / mean_back_hit / top2_success_rate
+    同时标记 confounded（多个 effect 同时出现时=true，不假装分离因果）。
+
+    Returns:
+        dict: 本期归因快照，形如
+            {"hot_effect": {"samples": n, "mean_front_hit":..., "mean_back_hit":...,
+                            "top2_success_rate":..., "confounded": bool}, ...}
+    """
+    buy_count = review_result.get("buy_count", 2)
+    results = review_result.get("results", [])
+    all_pred = (prediction.get("buy", []) + prediction.get("watch", []))
+
+    # 本期开奖命中（复用 review results 中已补的 front_hit/back_hit）
+    hit_by_key = {}
+    for i, r in enumerate(results):
+        key = (tuple(r.get("front", [])), tuple(r.get("back", [])))
+        hit_by_key[key] = (r.get("front_hit", 0), r.get("back_hit", 0))
+
+    # 本期最佳表现（用于 Top2 success 判定，与 _calc_top2_selection 同口径）
+    from prize_checker import performance_key
+    keys_all = [performance_key(r.get("tier"), r.get("front_hit", 0), r.get("back_hit", 0))
+                for r in results] if results else []
+    best_key = max(keys_all) if keys_all else None
+
+    acc = {k: {"samples": 0, "sum_front_hit": 0.0, "sum_back_hit": 0.0,
+               "top2_success": 0.0, "confounded": 0} for k in _ATTRIBUTION_KEYS}
+    for i, cand in enumerate(all_pred):
+        eff = cand.get("strategy_effects") or {}
+        key = (tuple(cand.get("front", [])), tuple(cand.get("back", [])))
+        fh, bh = hit_by_key.get(key, (0, 0))
+        is_top2 = i < buy_count
+        # 该候选命中的 effect 数（用于 confounded 标记，不假装分离因果）
+        hit_effects = [e for e, flag in _EFFECT_FLAG_MAP.items() if bool(eff.get(flag))]
+        confounded = len(hit_effects) > 1
+        # 该候选是否等于最佳表现（Top2 success：最佳组合在 BUY 且此候选匹配）
+        top2_success = 0.0
+        if best_key is not None and is_top2:
+            tier = results[i].get("tier") if i < len(results) else None
+            pk = performance_key(tier, fh, bh)
+            top2_success = 1.0 if pk == best_key else 0.0
+        for effect, flag in _EFFECT_FLAG_MAP.items():
+            if bool(eff.get(flag)):
+                acc[effect]["samples"] += 1
+                acc[effect]["sum_front_hit"] += fh
+                acc[effect]["sum_back_hit"] += bh
+                acc[effect]["top2_success"] += top2_success
+                acc[effect]["confounded"] += 1 if confounded else 0
+
+    result = {}
+    for effect, d in acc.items():
+        n = d["samples"]
+        result[effect] = {
+            "samples": n,
+            "mean_front_hit": round(d["sum_front_hit"] / n, 4) if n else 0.0,
+            "mean_back_hit": round(d["sum_back_hit"] / n, 4) if n else 0.0,
+            "top2_success_rate": round(d["top2_success"] / n, 4) if n else 0.0,
+            # 该 effect 的样本中与其它 effect 共现的比例
+            "confounded": round(d["confounded"] / n, 4) if n else 0.0,
+        }
+    return result
+
+
+def _accrue_attribution(hist_strategy, this_attr):
+    """把本期归因累计进持久化的策略版本账户（每类 effect 累计样本/命中/成功）。
+
+    样本 < ATTRIBUTION_MIN_SAMPLE 时标记 INSUFFICIENT_DATA（禁止据此自动调参）。
+    多个 effect 同现 → confounded=True（不假装分离因果）。
+    """
+    from strategy_manager import ATTRIBUTION_MIN_SAMPLE, RANDOM_TOP2_BASELINE
+    acc = hist_strategy.get("attribution", {}) or {}
+    for effect in _ATTRIBUTION_KEYS:
+        cur = acc.get(effect, {"samples": 0, "sum_front_hit": 0.0, "sum_back_hit": 0.0,
+                               "top2_success": 0.0, "confounded": 0})
+        t = this_attr.get(effect) or {}
+        n = t.get("samples", 0)
+        cur["samples"] = cur.get("samples", 0) + n
+        cur["sum_front_hit"] = cur.get("sum_front_hit", 0.0) + t.get("mean_front_hit", 0.0) * n
+        cur["sum_back_hit"] = cur.get("sum_back_hit", 0.0) + t.get("mean_back_hit", 0.0) * n
+        cur["top2_success"] = cur.get("top2_success", 0.0) + t.get("top2_success_rate", 0.0) * n
+        cur["confounded"] = cur.get("confounded", 0) + t.get("confounded", 0.0) * n
+        total_samples = cur["samples"]
+        cur["mean_front_hit"] = round(cur.get("sum_front_hit", 0.0) / total_samples, 4) if total_samples else 0.0
+        cur["mean_back_hit"] = round(cur.get("sum_back_hit", 0.0) / total_samples, 4) if total_samples else 0.0
+        cur["top2_success_rate"] = round(cur.get("top2_success", 0.0) / total_samples, 4) if total_samples else 0.0
+        # 该 effect 样本中与其它 effect 共现的比例（不假装分离因果）
+        cur["confounded"] = round(cur.get("confounded", 0.0) / total_samples, 4) if total_samples else 0.0
+        if total_samples < ATTRIBUTION_MIN_SAMPLE:
+            cur["status"] = "INSUFFICIENT_DATA"
+        else:
+            cur["status"] = "OK"
+        acc[effect] = cur
+    hist_strategy["attribution"] = acc
+    return acc
 
 
 def _update_performance(review_result):
@@ -320,6 +444,13 @@ def _update_performance(review_result):
         }
 
     save_performance_history(history)
+
+    # Fix2：把本期归因累计进该策略版本账户（样本不足时标 INSUFFICIENT_DATA）
+    this_attr = review_result.get("attribution") or {}
+    if this_attr and key in strategies:
+        _accrue_attribution(strategies[key], this_attr)
+        save_performance_history(history)
+
     return key
 
 

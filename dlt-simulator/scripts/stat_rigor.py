@@ -330,6 +330,70 @@ def distribution_diagnostics(candidates, seed=42):
 
 
 # ---------------------------------------------------------------------------
+# 七、Exact Binomial 显著性检验（H0: p=p0, H1: p<p0 单侧下尾）
+# ---------------------------------------------------------------------------
+def exact_binomial_pmf(k, n, p):
+    """精确二项分布概率 P(X=k)（k 次成功，n 次试验，单次成功率 p）。"""
+    if k < 0 or k > n or n < 0:
+        return 0.0
+    p = float(p)
+    if p == 0.0:
+        return 1.0 if k == 0 else 0.0
+    if p == 1.0:
+        return 1.0 if k == n else 0.0
+    return math.comb(n, k) * (p ** k) * ((1.0 - p) ** (n - k))
+
+
+def exact_binomial_lower_tail(k, n, p0):
+    """精确二项单侧下尾检验 P(X <= k | Bin(n, p0))。
+
+    用于 H0: p = p0, H1: p < p0。观测到 k 次成功（或更少）的概率越小，
+    越说明真实成功率显著低于基线 p0（如随机基线 0.20）。
+
+    Returns:
+        float: 累积下尾概率 p_value（0~1）。
+    """
+    p = 0.0
+    for x in range(0, k + 1):
+        p += exact_binomial_pmf(x, n, p0)
+    return p
+
+
+def significance_vs_random(success, fail, p0=0.20, tie=0):
+    """对 SUCCESS/FAIL 序列做 exact binomial 检验（TIE 不计入 n）。
+
+    H0: 真实 Top-2 命中率 p = p0（随机基线 0.20）
+    H1: p < p0（显著跑不赢随机）
+    n = success + fail（TIE 不计入，保持既有语义）
+
+    Returns:
+        dict: {
+            "random_baseline": p0,
+            "success": success, "fail": fail, "tie": tie,
+            "valid_samples": n, "observed_top2_accuracy": <success/n>,
+            "p_value": <exact lower-tail p>,
+            "significantly_below_random": bool,
+        }
+    """
+    n = success + fail
+    if n == 0:
+        return {
+            "random_baseline": p0, "success": success, "fail": fail, "tie": tie,
+            "valid_samples": 0, "observed_top2_accuracy": 0.0,
+            "p_value": 1.0, "alpha": 0.05, "significantly_below_random": False,
+        }
+    observed = success / n
+    p_value = exact_binomial_lower_tail(success, n, p0)
+    return {
+        "random_baseline": p0, "success": success, "fail": fail, "tie": tie,
+        "valid_samples": n, "observed_top2_accuracy": round(observed, 6),
+        "p_value": round(p_value, 6),
+        "alpha": 0.05,
+        "significantly_below_random": bool(p_value < 0.05 and observed < p0),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 五、CLI
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
