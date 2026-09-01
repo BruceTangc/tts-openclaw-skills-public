@@ -770,8 +770,16 @@ def strategy_effects_for_candidate(front, back, effects_flags):
     f_flags = effects_flags.get("front", {})
     b_flags = effects_flags.get("back", {})
     hot = cold = trend = omission = False
-    for n in list(front) + list(back):
-        fl = f_flags.get(n) or b_flags.get(n) or {}
+    # 前后区必须分开读取：前区/后区号码值 1~12 重叠，若混在一个循环里，
+    # 后区号码可能错误读取 front_flags[n]，导致 attribution 串区。
+    for n in front:
+        fl = f_flags.get(n, {})
+        hot = hot or bool(fl.get("hot"))
+        cold = cold or bool(fl.get("cold"))
+        trend = trend or bool(fl.get("trend"))
+        omission = omission or bool(fl.get("omission"))
+    for n in back:
+        fl = b_flags.get(n, {})
         hot = hot or bool(fl.get("hot"))
         cold = cold or bool(fl.get("cold"))
         trend = trend or bool(fl.get("trend"))

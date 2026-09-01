@@ -103,7 +103,7 @@ from strategy_manager import (
     evaluate_strategy, _select_effect_targets, _BALANCED_PARAM_RANGES,
     _BALANCED_PARAM_STEPS, ATTRIBUTION_MIN_SAMPLE, _BALANCED_EFFECT_PARAM,
 )
-from generator import compute_weights, generate_top_candidates, strategy_effects_for_draws
+from generator import compute_weights, generate_top_candidates, strategy_effects_for_draws, strategy_effects_for_candidate
 from stat_rigor import exact_binomial_pmf, exact_binomial_lower_tail, significance_vs_random
 
 
@@ -149,9 +149,9 @@ check("Balanced ADJUST 不碰 hot_weight", adj["params"]["hot_weight"] == s["par
 check("Balanced ADJUST 修改 balanced_hot_adjust",
       adj["params"]["balanced_hot_adjust"] != s["params"]["balanced_hot_adjust"],
       f"{s['params']['balanced_hot_adjust']} -> {adj['params']['balanced_hot_adjust']}")
-# 变化量 = +0.01（单步小调）
-check("hot 步长为 +0.01",
-      abs(adj["params"]["balanced_hot_adjust"] - s["params"]["balanced_hot_adjust"] - 0.01) < 1e-9)
+# 变化量 = -0.01（负向 effect → 小步减弱，单步小调；不再反向加强）
+check("hot 步长为 -0.01",
+      abs(adj["params"]["balanced_hot_adjust"] - s["params"]["balanced_hot_adjust"] + 0.01) < 1e-9)
 check("adjusted params 在上下限内", all(
     _BALANCED_PARAM_RANGES[k][0] <= v <= _BALANCED_PARAM_RANGES[k][1]
     for k, v in adj["params"].items() if k in _BALANCED_PARAM_RANGES))
@@ -410,6 +410,90 @@ finally:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+print("\n[16] 2个闭环bug回归：ADJUST调参方向 + 前后区attribution串区")
+# ---------------------------------------------------------------------------
+# --- 16.1 ADJUST 调参方向：负向 effect → 小步减弱（direction=-1），绝不调大 ---
+# omission_effect 负向 → balanced_omission_adjust 必须下降 (0.10 -> 0.09)
+s_om = make_strategy(version=2, params={
+    **default_strategy_params(), "balanced_omission_adjust": 0.10})
+attr_om = {"omission_effect": ok_attr(top2_success_rate=0.08)}
+r_om = adjust_strategy(dict(s_om), "auto", attribution=attr_om)
+_om_v = r_om["params"].get("balanced_omission_adjust")
+check("omission_effect 负向 → balanced_omission_adjust 下降(0.10->0.09)", _om_v == 0.09, f"got={_om_v}")
+check("omission 负向 绝不升到 0.11", _om_v < 0.10 and _om_v <= 0.11, f"got={_om_v}")
+
+# hot_effect 负向 → balanced_hot_adjust 下降
+s_hot = make_strategy(version=2, params={
+    **default_strategy_params(), "balanced_hot_adjust": 0.06})
+attr_hot = {"hot_effect": ok_attr(top2_success_rate=0.04)}
+r_hot = adjust_strategy(dict(s_hot), "auto", attribution=attr_hot)
+_hv = r_hot["params"].get("balanced_hot_adjust")
+check("hot_effect 负向 → balanced_hot_adjust 下降(0.06->0.05)", _hv == 0.05, f"got={_hv}")
+
+# cold_effect / trend_effect / exposure 负向同理只能减弱
+s_cold = make_strategy(version=2, params={
+    **default_strategy_params(), "balanced_cold_adjust": 0.08})
+r_cold = adjust_strategy(dict(s_cold), "auto", attribution={"cold_effect": ok_attr(top2_success_rate=0.07)})
+_cv = r_cold["params"].get("balanced_cold_adjust")
+check("cold_effect 负向 → balanced_cold_adjust 下降(0.08->0.07)", _cv == 0.07, f"got={_cv}")
+s_tr = make_strategy(version=2, params={
+    **default_strategy_params(), "balanced_trend_adjust": 0.05})
+r_tr = adjust_strategy(dict(s_tr), "auto", attribution={"trend_effect": ok_attr(top2_success_rate=0.06)})
+_tv = r_tr["params"].get("balanced_trend_adjust")
+check("trend_effect 负向 → balanced_trend_adjust 下降(0.05->0.04)", _tv == 0.04, f"got={_tv}")
+s_ex = make_strategy(version=2, params={
+    **default_strategy_params(), "exposure_penalty_coef": 0.04})
+r_ex = adjust_strategy(dict(s_ex), "auto", attribution={"exposure_penalty_effect": ok_attr(top2_success_rate=0.05)})
+_ev = r_ex["params"].get("exposure_penalty_coef")
+check("exposure_effect 负向 → exposure_penalty_coef 下降(0.04->0.035)", abs(_ev - 0.035) < 1e-9, f"got={_ev}")
+
+# 无充分 attribution 样本 → 参数不变
+s_ns = make_strategy(version=2, params={
+    **default_strategy_params(), "balanced_omission_adjust": 0.10})
+attr_ns = {"omission_effect": {"sample_count": 5, "status": "INSUFFICIENT_DATA", "top2_success_rate": 0.02}}
+r_ns = adjust_strategy(dict(s_ns), "auto", attribution=attr_ns)
+_ns_v = r_ns["params"].get("balanced_omission_adjust")
+check("无充分样本 → 参数不变(仍0.10)", _ns_v == 0.10, f"got={_ns_v}")
+check("无充分样本 → changed 为空", r_ns["last_adjustment"]["changed"] == [], str(r_ns["last_adjustment"]["changed"]))
+
+# 参数仍不得越下限：0.005-0.01 被 clamp 到 0.0
+s_lo2 = make_strategy(version=2, params={
+    **default_strategy_params(), "balanced_cold_adjust": 0.005})
+r_lo2 = adjust_strategy(dict(s_lo2), "auto", attribution={"cold_effect": ok_attr(top2_success_rate=0.03)})
+_lo2_v = r_lo2["params"].get("balanced_cold_adjust")
+check("参数不低于下限(clamp到0.0)", _lo2_v >= 0.0, f"got={_lo2_v}")
+
+# --- 16.2 前后区 attribution 串区修复 ---
+# 构造 front 8 与 back 8 effect 不同的 flags：
+#   front[8] = hot + trend；back[8] = omission（后区无 hot）
+_ef = {
+    "front": {8: {"hot": True, "cold": False, "trend": True, "omission": False},
+              1: {"hot": False, "cold": False, "trend": False, "omission": False}},
+    "back": {8: {"hot": False, "cold": False, "trend": False, "omission": True},
+             9: {"hot": False, "cold": False, "trend": False, "omission": False}},
+}
+# 仅前区含8：应只读 front_flags[8] → hot/trend，无 omission
+_r_f_only = strategy_effects_for_candidate([8, 1, 2, 3, 4], [9, 10], _ef)
+check("前区含8 → 命中 hot(不走后区flag)", _r_f_only["hot_adjust"] is True and _r_f_only["omission_adjust"] is False,
+      str(_r_f_only))
+check("前区含8 → trend 命中", _r_f_only["trend_adjust"] is True, str(_r_f_only))
+# 仅后区含8：应只读 back_flags[8] → omission，不得误读 front hot
+_r_b_only = strategy_effects_for_candidate([1, 2, 3, 4, 5], [8, 9], _ef)
+check("后区含8 → 命中 omission(读back_flags[8])", _r_b_only["omission_adjust"] is True, str(_r_b_only))
+check("后区含8 → 不误读 front hot(串区修复)", _r_b_only["hot_adjust"] is False, str(_r_b_only))
+check("后区含8 → 不误读 trend(串区修复)", _r_b_only["trend_adjust"] is False, str(_r_b_only))
+# 前后都含8：两者各自 flag 都累计
+_r_both = strategy_effects_for_candidate([8, 1, 2, 3, 4], [8, 9], _ef)
+check("前后区均含8 → hot(前)+omission(后)都命中", _r_both["hot_adjust"] is True and _r_both["omission_adjust"] is True,
+      str(_r_both))
+
+# --- 16.3 原 15 段语义保持：负向不再反向加强的完整核对 ---
+# 若去掉 direction 修复前，omission 负向会变成 0.11；现在必须在区间内且下降
+check("omission 负向结果仍在配置区间[0,0.15]",
+      0.0 <= _om_v <= _BALANCED_PARAM_RANGES["balanced_omission_adjust"][1], f"got={_om_v}")
+
+
 _restore_runtime_state()
 print("\n" + "=" * 66)
 print(f"结果: PASS={PASS} FAIL={FAIL}")

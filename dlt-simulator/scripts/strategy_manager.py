@@ -263,7 +263,8 @@ def _select_effect_targets(attribution, strategy):
 
     规则：
       - 只有 sample_count >= ATTRIBUTION_MIN_SAMPLE 且非 INSUFFICIENT_DATA 的 effect 可入选。
-      - 按“表现差于随机”的方向性（负向 effect）排序，优先调强负向最重的 effect。
+      - 按“表现差于随机”的方向性（负向 effect）排序，优先调负向最重的 effect。
+      - 负向 effect → 小步减弱（direction = -1）；无充分证据 → 不动。绝不因表现差而调大参数。
       - 每个 effect 对应一个 balanced_* 参数；balanced_max_total_adjust 默认步长0且
         除非有充分统计证据否则不选。
       - 多个 effect 同现标记 confounded=True（不假装完全分离因果）。
@@ -289,7 +290,9 @@ def _select_effect_targets(attribution, strategy):
         if rate is None:
             continue
         if rate < RANDOM_TOP2_BASELINE * 0.7:  # 明显跑不赢随机才触发方向
-            candidates.append((param, +1))
+            # 负向 effect → 小步减弱（减弱对应 heuristic 修正的权重），绝不要调大。
+            # 若要未来支持正向加强，必须另立独立的正向统计证据规则；本轮不加。
+            candidates.append((param, -1))
     # 最多选 2 个：按 effect 顺序去重，避免一次全面漂移
     selected = []
     seen = set()
