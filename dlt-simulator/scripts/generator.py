@@ -342,43 +342,52 @@ def _high_low_score(front, back):
     return (front_score + back_score) / 2.0
 
 
-def score_candidate(front, back, draws, window=None, freq=None, params=None):
-    """
-    多维度评分
+_LEGACY_WEIGHTS = {
+    "frequency": 0.25,
+    "omission": 0.20,
+    "sum": 0.15,
+    "odd_even": 0.15,
+    "zone": 0.10,
+    "high_low": 0.15,
+}
+# Balanced 独立评分路径：结构分维度（非历史，只描述组合本身形态）
+_STRUCTURAL_DIMS = ("sum", "odd_even", "zone", "high_low")
+# 历史统计修正维度（balanced 下只作弱 correction，受上限约束）
+_STATISTICAL_DIMS = ("frequency", "omission")
+# Balanced 排名层：历史统计 correction 对最终分的最大贡献比例（10%~15%）
+# 取 0.15：即便 frequency+omission 全部打满，也不会超过结构分的主导地位，
+# 避免历史噪声经 ranking 层回流造成高位塌缩。
+BALANCED_STAT_CAP = cfg.get("balanced_stat_cap", 0.15)
 
-    Args:
-        freq: 可选预计算 (front_freq, back_freq, front_last, back_last, total)，
-              由 rank_candidates 一次构建传入，避免每个候选重复 O(期数) 扫描。
-        params: 生成器参数（omission_bonus 等；None 回退默认）
+
+def _score_dimensions(front, back, draws, window=None, freq=None, params=None):
+    """计算各维度原始分（不合并）。
 
     Returns:
-        dict: 各维度分数及总分
+        (scores, data): scores 为各维度分数 dict，data 为用于总分长度一致性的一次样本窗口。
     """
     params = params or {}
     omission_bonus = float(params.get("omission_bonus", 1.0))
 
     if freq is not None:
         front_freq, back_freq, front_last, back_last, total = freq
-        data = draws[:window] if window else draws  # 仅用于 total/len 一致性
+        data = draws[:window] if window else draws
     else:
         data = draws[:window] if window else draws
         total = len(data)
         if total == 0:
-            return {"total": 0}
+            return {k: 0.0 for k in _STRUCTURAL_DIMS + _STATISTICAL_DIMS}, data
         front_freq, back_freq, front_last, back_last, total = _build_freq(data)
 
     if total == 0:
-        return {"total": 0}
+        return {k: 0.0 for k in _STRUCTURAL_DIMS + _STATISTICAL_DIMS}, data
 
     scores = {}
-
-    # 1. 频率得分（号码在历史中出现的频率，适度偏高更好）
+    # 1. 频率（历史）
     front_freq_score = sum(front_freq.get(n, 0) for n in front) / (total * 5)
     back_freq_score = sum(back_freq.get(n, 0) for n in back) / (total * 2)
     scores["frequency"] = round((front_freq_score + back_freq_score) / 2, 4)
-
-    # 2. 遗漏值得分（遗漏适中的号码）
-    #    freq 已预计算时 front_last/back_last 已就绪；否则现场构建（一次性）
+    # 2. 遗漏（历史）
     if freq is None:
         front_last = {}
         back_last = {}
@@ -393,17 +402,12 @@ def score_candidate(front, back, draws, window=None, freq=None, params=None):
     back_miss = [back_last.get(n, total) for n in back]
     avg_front_miss = sum(front_miss) / len(front_miss) if front_miss else 0
     avg_back_miss = sum(back_miss) / len(back_miss) if back_miss else 0
-    # 遗漏10-30期为佳（目标值来自配置，默认 front=20 / back=10）
-    # 评分公式不变，仅把硬编码目标值改为可配置项；omission_bonus 可缩放该维度。
     scores["omission"] = round(omission_bonus * (
         max(0, 1.0 - abs(avg_front_miss - FRONT_OMISSION_TARGET) / (FRONT_OMISSION_TARGET + 10)) * 0.5 +
         max(0, 1.0 - abs(avg_back_miss - BACK_OMISSION_TARGET) / (BACK_OMISSION_TARGET + 5)) * 0.5), 4)
-
-    # 3. 和值得分：z-score 连续评分（随偏离历史/理论 mean±std 平滑下降，不硬杀号）
-    front_sum = sum(front)
-    scores["sum"] = round(_sum_score(front_sum, data), 4)
-
-    # 4. 奇偶得分（2:3 或 3:2 为佳；分级 soft 评分，不硬拒绝）
+    # 3. 和值（结构）
+    scores["sum"] = round(_sum_score(sum(front), data), 4)
+    # 4. 奇偶（结构）
     odd = sum(1 for n in front if n % 2 == 1)
     if odd in (2, 3):
         scores["odd_even"] = 1.0
@@ -412,8 +416,7 @@ def score_candidate(front, back, draws, window=None, freq=None, params=None):
     else:
         scores["odd_even"] = 0.1
     scores["odd_even"] = round(scores["odd_even"], 4)
-
-    # 5. 区间分布得分（分级 soft 评分）
+    # 5. 区间分布（结构）
     zones = [0, 0, 0]
     for n in front:
         if n <= 12:
@@ -429,32 +432,49 @@ def score_candidate(front, back, draws, window=None, freq=None, params=None):
     else:
         scores["zone"] = 0.2
     scores["zone"] = round(scores["zone"], 4)
-
-    # 6. high/low 连续分布评分（前区高区18-35 / 后区高区7-12，全部允许生成）
+    # 6. high/low（结构）
     scores["high_low"] = round(_high_low_score(front, back), 4)
+    return scores, data
 
-    # 7. 奖级概率得分已移除：大乐透为独立随机开奖，无可靠概率预测，
-    #    避免“伪评分”误导。权重在下方 6 项归一化为 100%。
 
-    # 加权总分（6 项归一化）
-    weights = {
-        "frequency": 0.25,
-        "omission": 0.20,
-        "sum": 0.15,
-        "odd_even": 0.15,
-        "zone": 0.10,
-        "high_low": 0.15,
-    }
-    total_score = sum(scores[k] * weights[k] for k in weights)
-    scores["total"] = round(total_score, 4)
+def _combine_legacy(scores):
+    """hot/cold/trend：沿用原加权（历史维度可占主导）。"""
+    return round(sum(scores[k] * _LEGACY_WEIGHTS[k] for k in _LEGACY_WEIGHTS), 4)
+
+
+def _combine_balanced(scores, cap=None):
+    """balanced：结构分为主 + 统计修正为辅（历史贡献封顶）。
+
+    结构分各维均分 1.0 权重（4 项结构维取均值，范围 [0,1]）；
+    统计修正分（frequency/omission 均值，范围 [0,1]）乘以封顶比例作为增量。
+    """
+    if cap is None:
+        cap = BALANCED_STAT_CAP
+    struct = sum(scores[k] for k in _STRUCTURAL_DIMS) / len(_STRUCTURAL_DIMS)
+    stats = sum(scores[k] for k in _STATISTICAL_DIMS) / len(_STATISTICAL_DIMS)
+    # 统计修正最多贡献 cap * 结构分；未获统计证据支持的历史频率无法形成强排名优势
+    correction = min(stats, cap * struct) if struct > 0 else 0.0
+    return round(struct + correction, 4)
+
+
+def score_candidate(front, back, draws, window=None, freq=None, params=None):
+    """
+    多维度评分（legacy 入口，hot/cold/trend 沿用原加权；balanced 请走 rank_candidates）。
+
+    保持既有返回契约：包含 frequency/omission/sum/odd_even/zone/high_low/total/components。
+    """
+    scores, _ = _score_dimensions(front, back, draws, window, freq, params)
+    scores["total"] = _combine_legacy(scores)
     scores["components"] = {k: v for k, v in scores.items() if k != "total"}
-
     return scores
 
 
-def rank_candidates(pool, draws, window=None, params=None):
+def rank_candidates(pool, draws, window=None, params=None, strategy="balanced"):
     """
     对候选池评分并排序（预计算频次，避免每个候选重复 O(期数) 扫描）
+
+    balanced 走独立评分路径：结构分为主 + 统计修正为辅（历史贡献封顶）；
+    hot/cold/trend 沿用原加权（历史维度可占主导）。
 
     Returns:
         list[tuple]: [(front, back, score), ...] 按总分降序
@@ -465,8 +485,12 @@ def rank_candidates(pool, draws, window=None, params=None):
     freq = _build_freq(data)  # 一次构建，全部候选复用
     scored = []
     for front, back in pool:
-        scores = score_candidate(front, back, draws, window, freq=freq, params=params)
-        scored.append((front, back, scores["total"]))
+        scores, _ = _score_dimensions(front, back, draws, window, freq=freq, params=params)
+        if strategy == "balanced":
+            total = _combine_balanced(scores, cap=(params or {}).get("balanced_stat_cap"))
+        else:
+            total = _combine_legacy(scores)
+        scored.append((front, back, total))
     scored.sort(key=lambda x: x[2], reverse=True)
     return scored
 
@@ -540,7 +564,10 @@ def calibrate_portfolio(ranked, top_n, penalty_coef=None):
     if penalty_coef is None:
         penalty_coef = EXPOSURE_PENALTY_COEF
     penalty_coef = float(penalty_coef)
-    if len(ranked) <= top_n or penalty_coef <= 0:
+    # 仅当“候选数多于需求”时，贪婪选择才有意义；但即便 len(ranked) <= top_n，
+    # 若 len(ranked) > 1 仍应跑一遍软惩罚重排序（修复收口#2：最终 Top10 即便恰好凑满，
+    # 也要对重叠号码施加曝光降权，避免重复号霸占 BUY/WATCH 高位，而非直接 append）。
+    if penalty_coef <= 0:
         return [(f, b, s, s, 0.0) for f, b, s in ranked[:top_n]]
 
     remaining = list(ranked)
@@ -575,6 +602,56 @@ def calibrate_portfolio(ranked, top_n, penalty_coef=None):
     return selected
 
 
+def finalize_portfolio(candidates, prediction_count, backend_calibrate=True, penalty_coef=None):
+    """对“最终实际输出”候选集合做一次收尾 portfolio exposure 校准。
+
+    背景（收口修复#2）：原先流程在历史过滤+补充生成+去重之后，直接用 append 顺序
+    分割 BUY/WATCH，最终 Top10 没有再作为一个完整组合集做一次曝光检查；若补充候选
+    里某个号码高度重复，那些组会被原样 append 进最终集，破坏曝光均匀性。
+
+    本函数在**所有步骤之后**（生成→diversify→历史过滤→不足补充→去重）对最终候选集：
+      - soft penalty 重排序（不硬限单号出现次数，不 reject，不重引入历史完整过滤）
+      - 只调排序，保证最终仍返回 prediction_count 组
+      - 重算 adjusted_score / exposure_penalty，并重编号 rank（与 adjusted_score 排序一致）
+
+    Args:
+        candidates: list[dict]，每个含 front/back/score（原始质量分）；
+                    可选已有 adjusted_score/exposure_penalty
+        prediction_count: 最终目标组数
+        backend_calibrate: 是否对最终集执行曝光校准（balanced 传 True）
+        penalty_coef: 曝光惩罚系数（None 用 config 默认）
+
+    Returns:
+        list[dict]: 重校准并按 adjusted_score 降序、rank 重编号后的最终候选集
+    """
+    out = []
+    # 1. 按原始质量分降序作为入校准的初始顺序
+    scored = [(c["front"], c["back"], float(c.get("score", c.get("adjusted_score", 0.0))))
+              for c in candidates]
+    if backend_calibrate:
+        calibrated = calibrate_portfolio(scored, prediction_count, penalty_coef=penalty_coef)
+    else:
+        calibrated = [(f, b, s, s, 0.0) for (f, b, s) in scored[:prediction_count]]
+    # 2. 校准结果与原始候选信息合并（按 front/back 匹配，保留原始元数据）
+    by_key = {(tuple(c["front"]), tuple(c["back"])): c for c in candidates}
+    for front, back, raw, adj, pen in calibrated:
+        info = by_key.get((tuple(front), tuple(back)), {})
+        out.append({
+            "front": front,
+            "back": back,
+            "score": round(raw, 4),
+            "adjusted_score": round(adj, 4),
+            "exposure_penalty": round(pen, 4),
+            **({k: v for k, v in info.items()
+                if k not in ("front", "back", "score", "adjusted_score", "exposure_penalty", "rank")}),
+        })
+    # 3. 按 adjusted_score 降序重排并重编号 rank
+    out.sort(key=lambda x: x["adjusted_score"], reverse=True)
+    for i, c in enumerate(out):
+        c["rank"] = i + 1
+    return out[:prediction_count]
+
+
 def generate_top_candidates(draws, strategy="balanced", top_n=10, pool_size=None, params=None):
     """
     完整流程：生成候选池 → 评分 → 过滤 → (balanced)曝光校准 → 取Top N
@@ -589,7 +666,7 @@ def generate_top_candidates(draws, strategy="balanced", top_n=10, pool_size=None
         pool_size = max(POOL_SIZE, top_n * 100)
 
     pool = generate_pool(draws, strategy, pool_size, params=params)
-    ranked = rank_candidates(pool, draws, params=params)
+    ranked = rank_candidates(pool, draws, params=params, strategy=strategy)
     filtered = filter_overlap(ranked)
     if strategy == "balanced":
         # 曝光校准：返回 (front, back, raw_score, adjusted_score, penalty)

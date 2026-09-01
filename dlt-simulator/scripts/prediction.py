@@ -17,7 +17,7 @@ from common import (
 )
 from fetch_history import fetch_history
 from statistics import full_statistics
-from generator import generate_top_candidates
+from generator import generate_top_candidates, finalize_portfolio
 from diversify import full_diversify
 from validator import filter_historical, load_history_combos
 from strategy_manager import load_current_strategy, get_generator_params
@@ -185,6 +185,17 @@ def generate_prediction(strategy_name=None, prediction_count=None):
                 if len(filtered) >= prediction_count:
                     break
 
+    # 6.1 收口修复#2：对“最终实际输出”候选集做一次收尾 portfolio exposure 校准。
+    #     历史过滤/补充生成/去重之后，原候选+补充候选作为一个完整 Top10 重新曝光校准，
+    #     重算 adjusted_score/exposure_penalty，并按 adjusted_score 重排、重编号 rank，
+    #     保证最终仍有 prediction_count 组（soft penalty，不 reject，不重引入历史过滤）。
+    balanced_final = strategy_name == "balanced"
+    filtered = finalize_portfolio(
+        filtered, prediction_count,
+        backend_calibrate=balanced_final,
+        penalty_coef=params.get("exposure_penalty_coef") if balanced_final else None,
+    )
+
     # 7. 分割BUY和WATCH
     buy = filtered[:BUY_COUNT]
     watch = filtered[BUY_COUNT:prediction_count]
@@ -206,6 +217,8 @@ def generate_prediction(strategy_name=None, prediction_count=None):
                 "back": c["back"],
                 "rank": c.get("rank", i + 1),
                 "score": c.get("score", 0),
+                "adjusted_score": c.get("adjusted_score", c.get("score", 0)),
+                "exposure_penalty": c.get("exposure_penalty", 0),
                 "label": "BUY",
             }
             for i, c in enumerate(buy)
@@ -216,6 +229,8 @@ def generate_prediction(strategy_name=None, prediction_count=None):
                 "back": c["back"],
                 "rank": c.get("rank", i + BUY_COUNT + 1),
                 "score": c.get("score", 0),
+                "adjusted_score": c.get("adjusted_score", c.get("score", 0)),
+                "exposure_penalty": c.get("exposure_penalty", 0),
                 "label": "WATCH",
             }
             for i, c in enumerate(watch)
