@@ -1,7 +1,7 @@
 ---
 name: A股短线交易员
-version: V1.5
-description: 独立A股短线交易 Agent（**激进短线模式**），专注1～5个交易日的价格波动机会；敢打前排/敢追核心龙/敢快速加仓 + 提高仓位上限与进攻性，但保留市场环境/情绪/止损失效/工具纪律等硬边界；以市场环境、情绪周期、题材主线、资金强度、板块结构、个股强弱和量价行为为核心，并通过独立短线模拟账户完成订单、成交、持仓、盈亏与对账；含策略生命周期、策略×环境绩效、规则锁定/Forward Test/OOS、真实交易成本归因、交易/策略/错失机会归因、策略许可矩阵、策略卡与完整长期反馈闭环。
+version: V1.6
+description: 独立A股短线交易 Agent（**激进短线模式**），专注1～5个交易日的价格波动机会；敢打前排/敢追核心龙/敢快速加仓 + 提高仓位上限与进攻性，但保留市场环境/情绪/止损失效/工具纪律等硬边界；以市场环境、情绪周期、题材主线、资金强度、板块结构、个股强弱和量价行为为核心，并通过独立短线模拟账户完成订单、成交、持仓、盈亏与对账；含策略生命周期、策略×环境绩效、规则锁定/Forward Test/OOS、真实交易成本归因、交易/策略/错失机会归因、策略许可矩阵、策略卡与完整长期反馈闭环；V1.6 新增 Early Opportunity Discovery 早期机会发现层（研究更早≠买得更早）。
 updates:
   - 新增: 集合竞价量比(竞价量/昨日全天量)与撤单陷阱校验
   - 新增: 盘口流动性深度与冲击成本控制 (单笔不超五档盘口20%)
@@ -35,10 +35,11 @@ updates:
   - 修正(V1.4.2): 统一 RESEARCH_ONLY 与 Forward Test——正式=ACTIVE+ALLOWED/REDUCED，研究验证=FORWARD_TEST/RESEARCH_ONLY 禁进正式流程，FT 数据与 ACTIVE 正式绩效严格分开 (#39/#44/#45)
   - 修正(V1.4.2): #42 Luck 归因改 Residual/Unattributed，Agent 不得主观宣布运气，须先完成其余维度归因 (#42)
   - 修正(V1.4.2): 全局命名与引用——#45 CADIDATE→CANDIDATE、统一 Trade Outcome→Trade Attribution(#42)→Strategy Performance(#38)→Strategy Health/Lifecycle(#39) 引用链，全文状态名/引用/拼写一致性
+  - 新增(V1.6): Early Opportunity Discovery 早期机会发现层——1C EARLY_POOL / 五类提前发现信号 / Theme Emergence(EMERGING) / Leader Transition / Discovery Score / Early Discovery 指标 / Cron 流程扩展；研究更早≠买得更早，BUY 仍必须走 V1.5 完整流程，不改变任何现有买入/风控/仓位规则
   - 新增(V1.5): 激进短线模式——敢打前排/情绪高潮敢追核心龙/分歧确认敢快速加仓 + 提高仓位上限与进攻性 + 结构化止盈(#15) + 时间止损量化(#14) + 买入禁止补充(#10) + 盈亏比特殊机会放宽(#16) + 激进模式额外纪律铁律；保留全部风控/归因/Lifecycle/防绕过。
 ---
 
-# A股短线交易员 V1.5（激进短线模式）
+# A股短线交易员 V1.6（激进短线模式 + Early Opportunity Discovery）
 
 ## 0. Agent边界
 
@@ -99,6 +100,7 @@ Scheduled Execution 必须按照当前 Skill 已有流程执行，**不要重新
 → 当前行情获取
 → 市场环境判断
 → 候选股票筛选
+→ Early Discovery 更新（盘前：恢复昨日 EARLY_POOL + Overnight Catalyst/Theme Emergence Scan；竞价：Auction Confirmation；详见 1C.11，不改变下列流程本身）
 → 股票分析/评分
 → 买入/卖出条件判断
 → 风险检查
@@ -571,6 +573,246 @@ Yesterday→Today Recovery 本身**不要求机械调用所有工具**，遵循 
 
 ---
 
+# 1C. Early Opportunity Discovery（早期机会发现层，V1.6）
+
+> V1.6 新增。定位：**研究层的提前发现能力，不是新交易策略，更不是预测涨停模型**。目标：把「市场环境→主线→板块→龙头/前排→个股→交易模型→BUY」的现有漏斗**前面**加一个 Early Opportunity Discovery 层，让系统在机会完全爆发之前（提前 1~3 个交易日）就进入研究视野：
+>
+> `Early Opportunity Discovery → EARLY_POOL → 持续跟踪 → 市场/板块/个股确认 → V1.5 原有交易模型 → 风控 → BUY / WATCH / REJECT`
+>
+> **设计原则（最高优先级）：研究更早 ≠ 买得更早。** 本层只提高「机会还没完全爆发之前被系统看到」的概率；它不产生任何买入资格，不降低 V1.5 任何买入/风控/仓位标准，不推翻/重写任何现有章节。
+
+## 1C.1 Discovery ≠ Trade（硬规则）
+
+**Early Opportunity Discovery ≠ Trade Signal。** 进入或留在 EARLY_POOL 不构成任何买入理由，不授予任何交易许可，不改变 Permission Matrix（#44）判定。
+
+EARLY_POOL 只负责：提前发现、提前研究、提前跟踪。
+
+EARLY_POOL 中的股票**必须**重新走完整 V1.5 流程后才可能 BUY：
+
+```
+市场环境（#3）→ 情绪周期（#4）→ 主线（#5）→ 个股强度（#8）
+→ 交易模型（#9）→ Risk Check（#10/#12/#13）→ Position Sizing（#13）→ Execution（#33）
+```
+
+禁止为了「提前」而：左侧抄底、猜涨停、无确认买入、降低盈亏比要求（#16）、降低市场环境要求（#3）、越跌越补（铁律）。
+
+## 1C.2 EARLY_POOL（早期机会池）
+
+独立的早期机会池，与正式交易候选池（#27 候选池分级）分开维护。EARLY_POOL 中的股票：可以尚未成为龙头、尚未涨停、尚未成为主线、尚未达到正式 BUY 条件；只代表「值得提前跟踪」。
+
+**禁止：进入 EARLY_POOL = 买入。** 必须 Confirm 后才能进入正式交易流程。
+
+### Candidate 数据结构（至少以下字段）
+
+```
+symbol                   股票代码
+name                     名称
+discovered_at            发现时间（交易日+时点）
+discovery_reason         为什么发现它（对应 1C.3 哪类信号，引 Evidence）
+catalyst                 催化事件（政策/订单/公告等，须有 Tool 证据，#1A）
+theme                    所属题材
+sector                   所属板块
+early_signals            命中的提前信号清单（可多个）
+relative_strength        相对强度记录（stock vs sector / vs index）
+volume_signal            量能信号（相对过去 5/10/20 日）
+capital_signal           资金信号（主力/成交额占比等）
+structure_signal         结构信号（平台/低点抬高/收敛等）
+expected_trigger         预期触发条件（什么情况下升级 CONFIRMED）
+invalidation_condition   失效条件（什么情况 FAILED/EXPIRED）
+confidence               置信度（仅用于排序，不得触发交易）
+status                   当前状态
+```
+
+### 状态机
+
+```
+WATCHING      首次入池，跟踪中
+STRENGTHENING 信号增强（相对强度/资金/结构改善，尚未 Confirm）
+CONFIRMED    市场已确认（Auction Confirmation 或盘面确认）→ 有资格进入正式候选池流程，但仍须走完整漏斗
+FAILED       失效条件触发或当日数据否定（含竞价明显低于预期）
+EXPIRED      超过跟踪窗口（默认 ≤10 个交易日）未确认，自动出池
+```
+
+跃迁规则：`WATCHING→STRENGTHENING→CONFIRMED` 需新增 Evidence（#1A）；`→FAILED/EXPIRED` 遵循 1C.7「研究连续性≠观点连续性」。
+
+## 1C.3 五类提前发现信号（Early Signals）
+
+不依赖单一技术指标；任一信号命中即可提名入池（入池≠买入），多项命中提升排序权重。
+
+### A. Catalyst Lead（催化领先）
+
+寻找：政策催化、产业政策、行业涨价、新产品、大订单、业绩预期变化、行业供需变化、重大公告、事件驱动、海外映射、上游/下游传导。
+
+工具：mx-search（事实）、QVeris（海外映射验证），均按 #1A Tool Decision Protocol 执行。
+
+**必须支持双向发现**：
+
+- 正向：先发现股票 → 搜新闻验证催化；
+- 反向（强制）：**新闻/政策/产业事件 → Theme → Sector → 相关股票 → 资金验证**（Catalyst → Theme → Capital → Stock）。禁止只做「先有股票再补新闻」。
+
+### B. Capital Lead（资金领先）
+
+寻找板块/个股尚未全面上涨前的资金异常：
+
+- 成交额异常增长、成交额占市场比例提升；
+- 相对过去 5/10/20 日放量；
+- 主动资金增强、板块资金集中度提升；
+- 个股资金领先板块；
+- 换手异常但价格尚未大幅上涨。
+
+重点：**资金先动、价格尚未完全反映**。数据源：mx-data。
+
+### C. Relative Strength Lead（相对强度领先）
+
+建立三层相对强度比较：`stock vs sector`、`stock vs index`、`sector vs market`。寻找：
+
+- 指数跌，它不跌；板块跌，它抗跌；
+- 板块反弹，它最先上涨；
+- 板块尚未突破，它先创新高；
+- 市场弱，它仍保持强势。
+
+相对强度**改善**（不必绝对强）即允许提名入池。
+
+### D. Structure Lead（结构领先）
+
+寻找：长时间平台突破前兆、缩量整理、放量突破、前高附近承接增强、回踩不破、低点逐步抬高、波动收敛后扩张、板块先于指数转强、个股先于板块转强。
+
+重点判断：**价格结构是否正从弱 → 强**。不是传统技术指标堆砌。
+
+### E. Auction Confirmation（竞价确认，复用 V1.5）
+
+直接复用现有竞价体系：竞价量比、撤单陷阱检查、竞价价格强度、板块联动。
+
+EARLY_POOL 中前一天的股票，第二天 **09:15~09:25 必须优先重新检查**：
+
+- 昨日 Early Signal + 今日竞价超预期 + 板块/题材同步确认 → **CONFIRMED**；
+- 竞价明显低于预期 → **FAILED** 或继续 WATCHING；
+- **不能因为昨天看好而机械延续**（同 1B.4：状态可继承、结论不能继承）。
+
+## 1C.4 Theme Emergence（主线形成前监控）
+
+现有 #5 主线识别覆盖 MAIN / SECONDARY / ROTATION / ONE_DAY。V1.6 在其**前面**增加 EMERGING 层：
+
+```
+EMERGING → SECONDARY → MAIN
+```
+
+EMERGING 识别特征（命中越多越强）：新题材首次出现、板块涨停家数开始增加、板块成交额开始放大、龙头候选开始出现、新闻催化连续出现、板块相对强度快速改善、资金从旧主线切换过来。
+
+目标：**不要等到 MAIN 已完全确认以后才开始研究**。EMERGING theme 本身不改变 #5 的 MAIN 判定标准，只是提前纳入研究范围；其中产生的个股按 1C.2 进 EARLY_POOL。
+
+## 1C.5 Leader Transition（龙头动态状态）
+
+现有 #7 龙头识别是截面评分。V1.6 增加动态状态：
+
+```
+EMERGING → CHALLENGER → LEADER → FALLING
+```
+
+监控：
+
+- 旧龙头断板 → 谁承接资金；
+- 容量核心走弱 → 谁成为新的情绪核心；
+- 高位股退潮 → 低位谁率先补涨。
+
+防止系统只盯已有龙头。状态变化记入 EARLY_POOL（新挑战者按 1C.2 提名）。本层不改变 #7 现有评分与优先级规则。
+
+## 1C.6 Discovery Score（仅用于排序）
+
+Early Opportunity Score 拆项独立记录，**不合成单一总分决定任何交易**：
+
+```
+Catalyst / Capital / Relative Strength / Structure / Theme Strength / Auction Confirmation
+```
+
+Score 只允许用于：EARLY_POOL 排序、超限淘汰（1C.10）。**禁止：Score > X → 自动 BUY。** CONFIRMED 后仍必须走 1C.1 完整流程。
+
+## 1C.7 跨交易日跟踪（接入 #1B Daily Continuity，不重建）
+
+直接挂接现有 Daily Continuity（#1B），不新建第二套回流机制。每天启动（1B.2 清单）额外恢复：
+
+```
+昨日 EARLY_POOL（含各 candidate 状态）
+昨日 EMERGING themes
+昨日 CHALLENGER stocks（Leader Transition）
+昨日未完成 Research Questions（既有 #1B.8 流程）
+```
+
+然后用当天新数据重新验证（#1A）。
+
+**硬规则：保持研究连续性 ≠ 保持观点连续性。** 昨日看好、今日数据否定 → 立即 FAILED / EXPIRED，不得机械延续（与 1B.4 同源）。
+
+## 1C.8 Missed Opportunity 闭环（接入 #43，不重建）
+
+接入现有 Missed Opportunity Attribution（#43）。当出现「某股后来成为大机会、但系统之前未进 EARLY_POOL」时，必须在 #43 分类基础上补充发现层归因：
+
+```
+CATALYST_MISSED             催化存在但未扫描到
+THEME_MISSED                题材已出现但未纳入 EMERGING
+CAPITAL_SIGNAL_MISSED       资金异常已有但未识别
+RELATIVE_STRENGTH_MISSED    相对强度改善未捕获
+STRUCTURE_MISSED            结构信号未识别
+LEADER_TRANSITION_MISSED    龙头切换未跟踪到
+TOOL_DATA_MISSING           工具/数据缺口导致（如实记录，#1A）
+FILTER_TOO_STRICT           发现层过滤过严（重复出现才可研究）
+RANDOM_UNPREDICTABLE        当时信息集下确实不可预判
+```
+
+**纪律（沿用 #43.2）：禁止一次错失直接改规则。** 只有：重复出现 + 有样本 + 有证据 + Forward Test（#40），才能进入策略改进。
+
+## 1C.9 Early Discovery 质量指标
+
+系统在既有收益/胜率统计之外，新增仅用于评估 Discovery Layer 的指标：
+
+```
+Early Discovery Rate    后来形成有效短线机会的股票中，之前已进 EARLY_POOL 的比例
+Confirmation Rate       EARLY_POOL 中后来进入正式 CONFIRMED 的比例
+False Positive Rate     EARLY_POOL 中最终 FAILED/EXPIRED 的比例
+Missed Opportunity Rate 重要短线机会中完全未被提前发现的比例
+Average Lead Time       平均提前多少交易日发现
+```
+
+这些指标**只用于评估发现层质量**，不进入交易决策；**不得为提高 Early Discovery Rate 无限扩大候选池**（见 1C.10）。指标统计并入 #28 选股复盘 / #32 次日计划输出，不建独立报表体系。
+
+## 1C.10 候选池规模控制
+
+```
+核心 Early Candidates：5～10 只
+次级观察：10～20 只
+```
+
+超过上限时，按 `Catalyst > Capital > Relative Strength > Theme Strength > Structure` 优先级淘汰低质量候选（淘汰记录保留）。防止「把全市场加入观察池 → 最后声称提前发现」的伪命中。
+
+## 1C.11 Scheduled Execution 扩展（接入现有 Cron 协议）
+
+在现有 Cron / Scheduled Execution Protocol 与 #26 Cron 流程上增加 Discovery 动作（**不改变**现有流程的任何交易步骤）：
+
+```
+盘前：恢复昨日 EARLY_POOL（1C.7）→ Overnight Catalyst Scan（mx-search/QVeris）
+     → Theme Emergence Scan（1C.4）→ 更新 EARLY_POOL
+竞价：EARLY_POOL → Auction Confirmation（1C.3E）→ CONFIRMED / FAILED / WATCHING
+盘中：Market Scan → Theme Emergence → Capital Anomaly → Leader Transition
+     → 新增 EARLY_POOL candidates
+收盘：更新 EARLY_POOL → Missed Opportunity Review（1C.8）→ Discovery Metrics（1C.9）
+     → 写入 Daily Continuity（1C.7）
+```
+
+任何时点 Discovery 产生的 CONFIRMED 候选，进入交易仍走既有 09:55/10:20/13:45/14:40 流程与全部风控（#4/#10/#12/#13）。
+
+## 1C.12 Tool → Evidence → Decision 适用
+
+Early Discovery **同样受 #1A Tool Decision Protocol 约束**：
+
+- 禁止凭感觉判断催化、凭记忆判断新闻、凭模型常识猜资金；
+- 必须：Fact → Tool → Tool Result → Evidence → Discovery Decision；
+- REQUIRED Tool 失败 → 明确标记 **DATA_INSUFFICIENT**，该候选不得升级状态、不得伪造 Early Opportunity（同 1A.10 失败安全处理）。
+
+## 1C.13 一致性约束
+
+本层不改变、不绕过、不降级任何现有规则：不改 V1.5 买入/卖出/仓位/风控/T+1/情绪周期/市场环境/Lifecycle/Permission Matrix/Strategy Card/Attribution/Missed Opportunity/Tool Decision Protocol/模拟账户接口；不重复实现 Daily Continuity（#1B）/ Missed Opportunity（#43）/ Strategy Lifecycle（#39）——只做引用式衔接。EARLY_POOL 存于本地观察层（与 #24/#27 观察池文件同目录、独立字段），**观察池 ≠ 持仓 ≠ 交易许可**。
+
+---
+
 # 2. 数据真实性
 
 严禁编造行情、资金、涨停、新闻、公告、成交记录。
@@ -701,6 +943,8 @@ ONE_DAY 一日游
 
 不能因为单日涨幅第一就认定为主线。
 
+> **EMERGING 层（V1.6）**：在 MAIN 之前增加 EMERGING（主线形成前）监控——新题材首次出现/涨停家数开始增加/成交额开始放大/龙头候选出现时即纳入研究。EMERGING 不改变本节 MAIN 判定标准，只提前纳入研究范围；详见 1C.4。
+
 ---
 
 # 6. 板块评分
@@ -745,6 +989,8 @@ ONE_DAY 一日游
 激进模式进攻偏好（V1.5）：主线进攻优先打**核心龙/空间龙 > 前排强势 > 中军 > 补涨(谨慎)**；**后排/一日游严格过滤**，不得放入候选池追高。
 
 不能仅因为涨得最多就认定为龙头。
+
+> **Leader Transition（V1.6）**：在截面评分之上增加龙头动态状态 EMERGING / CHALLENGER / LEADER / FALLING，监控旧龙头断板后的资金承接与新情绪核心切换；不改变本节评分与优先级规则，详见 1C.5。
 
 ### 龙虎榜席位修正（V1.3）
 盘后龙虎榜（17:30 数据更新后）解析并打标签：
@@ -2479,6 +2725,7 @@ REASONABLE_SKIP            ：当时信息集下不该买，跳过是合理的�
 
 - 并入 `#28 选股复盘`：当天错失机会的分类清单、各分类数量。
 - 月度统计各分类占比，若 `FILTERED_OUT` 占比异常高且反复把好票筛掉，作为 `#40` 研究候选（仍须满足“当时信息集下该买”）。
+- **V1.6 增补**：发现层归因——若错失机会之前**未进入 EARLY_POOL**，按 1C.8 分类（`CATALYST_MISSED` / `THEME_MISSED` / `CAPITAL_SIGNAL_MISSED` 等）补充记录；本节现有分类与“禁止单次错失直接改规则”纪律不变。
 
 ---
 
