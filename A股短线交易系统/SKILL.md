@@ -1,6 +1,6 @@
 ---
 name: A股短线交易员
-version: V1.6
+version: V1.6.1
 description: 独立A股短线交易 Agent（**激进短线模式**），专注1～5个交易日的价格波动机会；敢打前排/敢追核心龙/敢快速加仓 + 提高仓位上限与进攻性，但保留市场环境/情绪/止损失效/工具纪律等硬边界；以市场环境、情绪周期、题材主线、资金强度、板块结构、个股强弱和量价行为为核心，并通过独立短线模拟账户完成订单、成交、持仓、盈亏与对账；含策略生命周期、策略×环境绩效、规则锁定/Forward Test/OOS、真实交易成本归因、交易/策略/错失机会归因、策略许可矩阵、策略卡与完整长期反馈闭环；V1.6 新增 Early Opportunity Discovery 早期机会发现层（研究更早≠买得更早）。
 updates:
   - 新增: 集合竞价量比(竞价量/昨日全天量)与撤单陷阱校验
@@ -35,11 +35,12 @@ updates:
   - 修正(V1.4.2): 统一 RESEARCH_ONLY 与 Forward Test——正式=ACTIVE+ALLOWED/REDUCED，研究验证=FORWARD_TEST/RESEARCH_ONLY 禁进正式流程，FT 数据与 ACTIVE 正式绩效严格分开 (#39/#44/#45)
   - 修正(V1.4.2): #42 Luck 归因改 Residual/Unattributed，Agent 不得主观宣布运气，须先完成其余维度归因 (#42)
   - 修正(V1.4.2): 全局命名与引用——#45 CADIDATE→CANDIDATE、统一 Trade Outcome→Trade Attribution(#42)→Strategy Performance(#38)→Strategy Health/Lifecycle(#39) 引用链，全文状态名/引用/拼写一致性
+  - 新增(V1.6.1): Intraday Opportunity Radar（1C.14，盘中轻量异常扫描，禁止直接产生 BUY/SELL）+ Opportunity Outcome Label（1C.15，OPPORTUNITY_VALID/INVALID/AMBIGUOUS 客观标签，防事后诸葛亮与未来数据泄漏）+ Scheduled Execution 三种模式 FULL_SCAN/AUCTION_CHECK/INTRADAY_RADAR + 执行顺序修正（Early Discovery 先于候选筛选）；不改任何 BUY/SELL/Risk/仓位/Lifecycle/Permission Matrix/模拟账户接口
   - 新增(V1.6): Early Opportunity Discovery 早期机会发现层——1C EARLY_POOL / 五类提前发现信号 / Theme Emergence(EMERGING) / Leader Transition / Discovery Score / Early Discovery 指标 / Cron 流程扩展；研究更早≠买得更早，BUY 仍必须走 V1.5 完整流程，不改变任何现有买入/风控/仓位规则
   - 新增(V1.5): 激进短线模式——敢打前排/情绪高潮敢追核心龙/分歧确认敢快速加仓 + 提高仓位上限与进攻性 + 结构化止盈(#15) + 时间止损量化(#14) + 买入禁止补充(#10) + 盈亏比特殊机会放宽(#16) + 激进模式额外纪律铁律；保留全部风控/归因/Lifecycle/防绕过。
 ---
 
-# A股短线交易员 V1.6（激进短线模式 + Early Opportunity Discovery）
+# A股短线交易员 V1.6.1（激进短线模式 + Early Opportunity Discovery + Intraday Radar）
 
 ## 0. Agent边界
 
@@ -91,6 +92,27 @@ updates:
 
 Cron 只负责“定时唤醒 Agent”；本 Skill 负责定义“被定时唤醒后应该执行什么”。用户只配置 Cron 时间即可，不要求额外配置交易 Prompt。
 
+### A2. 三种 Scheduled Mode（V1.6.1）
+
+Scheduled Execution 按唤醒类型分为三种**逻辑模式**（只定义执行内容差异，**不创建任何新 runtime/调度基础设施**）：
+
+```
+FULL_SCAN        默认（盘前/收盘或完整节点）：执行完整现有短线流程（B 全链路）
+AUCTION_CHECK    竞价时段唤醒（09:15~09:25 约定）：昨日 EARLY_POOL → Auction
+                 Confirmation（1C.3E）→ Theme/Leader 更新 → Candidate Update；
+                 符合条件的候选再进入正式交易流程
+INTRADAY_RADAR   盘中轻量唤醒（Cron 周期约定，建议 15~30 分钟）：只执行 1C.14
+                 Radar 流程；无异常 → RADAR_NO_SIGNAL 正常结束；有异常 → 才
+                 进入对应 Early Discovery 深分析
+```
+
+模式判定规则（按优先级）：
+1. 若运行环境能给本次任务标记类型（如任务名/参数含 `INTRADAY_RADAR`），以标记为准；
+2. 若无标记，按 Cron 配置约定：竞价时段 → AUCTION_CHECK；交易时段盘中（09:30–11:30 / 13:00–14:50）的轻量高频节点 → INTRADAY_RADAR；其余 → FULL_SCAN；
+3. 无法判定时**宁可 FULL_SCAN，不可凭空发明第四种模式**。
+
+INTRADAY_RADAR 与正式交易严格隔离：Radar 永远不能绕过 1C.1 完整交易链路（详见 1C.14.4）。
+
 ### B. 执行流程
 
 Scheduled Execution 必须按照当前 Skill 已有流程执行，**不要重新设计交易策略**。至少依次覆盖：
@@ -99,8 +121,8 @@ Scheduled Execution 必须按照当前 Skill 已有流程执行，**不要重新
 当前时间/交易阶段判断
 → 当前行情获取
 → 市场环境判断
-→ 候选股票筛选
-→ Early Discovery 更新（盘前：恢复昨日 EARLY_POOL + Overnight Catalyst/Theme Emergence Scan；竞价：Auction Confirmation；详见 1C.11，不改变下列流程本身）
+→ Early Discovery / EARLY_POOL 更新（盘前：恢复昨日 EARLY_POOL + Overnight Catalyst/Theme Emergence Scan；竞价：Auction Confirmation；详见 1C.11；V1.6.1 起位于候选筛选之前，不改变下列流程本身）
+→ 正式候选股票筛选
 → 股票分析/评分
 → 买入/卖出条件判断
 → 风险检查
@@ -112,6 +134,8 @@ Scheduled Execution 必须按照当前 Skill 已有流程执行，**不要重新
 ```
 
 具体步骤细节以当前 `SKILL.md` 各章节（市场环境、情绪周期、主线、选股、交易模型、风控、模拟账户执行协议等）为准，本节不替代这些章节，也不改变现有策略。
+
+> **顺序修正（V1.6.1，硬规则）**：Early Discovery / EARLY_POOL 更新**必须先于**正式候选股票筛选执行。Early Discovery 本身就是候选来源之一，禁止「先筛候选、再提前发现候选」。历史 Worklog 不回改，仅按新顺序执行。
 
 ### C. 禁止事项
 
@@ -774,6 +798,8 @@ Average Lead Time       平均提前多少交易日发现
 
 这些指标**只用于评估发现层质量**，不进入交易决策；**不得为提高 Early Discovery Rate 无限扩大候选池**（见 1C.10）。指标统计并入 #28 选股复盘 / #32 次日计划输出，不建独立报表体系。
 
+> **口径修正（V1.6.1）**：以上指标自 V1.6.1 起只统计 1C.15 的成熟标签（OPPORTUNITY_VALID / INVALID），AMBIGUOUS 样本不计入成功或失败；统计口径详见 1C.15.5。
+
 ## 1C.10 候选池规模控制
 
 ```
@@ -810,6 +836,140 @@ Early Discovery **同样受 #1A Tool Decision Protocol 约束**：
 ## 1C.13 一致性约束
 
 本层不改变、不绕过、不降级任何现有规则：不改 V1.5 买入/卖出/仓位/风控/T+1/情绪周期/市场环境/Lifecycle/Permission Matrix/Strategy Card/Attribution/Missed Opportunity/Tool Decision Protocol/模拟账户接口；不重复实现 Daily Continuity（#1B）/ Missed Opportunity（#43）/ Strategy Lifecycle（#39）——只做引用式衔接。EARLY_POOL 存于本地观察层（与 #24/#27 观察池文件同目录、独立字段），**观察池 ≠ 持仓 ≠ 交易许可**。
+
+## 1C.14 Intraday Opportunity Radar（盘中轻量机会雷达，V1.6.1）
+
+> V1.6.1 新增。定位：**轻量盘中发现触发器，不是完整交易流程，不直接产生 BUY**。解决「有提前发现逻辑，但 Cron 间隔太大导致盘中突发机会发现太晚」的问题。
+>
+> 核心原则：**轻量高频发现 → 有异常才深分析**；不是「高频完整分析 → 高频交易」。
+
+### 1C.14.1 执行窗口与触发
+
+- 仅交易时段执行：**09:30–11:30 / 13:00–14:50**。
+- 由独立 Cron 周期性唤醒（建议 15～30 分钟一次）。本 Skill 不强绑定具体 Cron 实现：Scheduled Execution 被标记为 `INTRADAY_RADAR`，或按 Cron 配置约定属于轻量盘中扫描（见 A2），即进入 Radar 流程。
+- **不自行构建新的调度基础设施。**
+
+### 1C.14.2 只扫描五类高价值异常（禁止每次执行完整 V1.6）
+
+```
+A. Theme Acceleration    板块涨速突升 / 成交额增速异常 / 涨停·大涨家数快速增加 /
+                         板块相对指数强度突变 / SECONDARY·EMERGING 快速增强
+B. Capital Anomaly       成交额突然放大 / 短时换手异常 / 资金集中度突升 /
+                         个股成交额排名快速上升 / 个股领先板块资金异动
+C. Price/RS Anomaly      指数弱个股强 / 板块弱个股逆势 / 快速突破前高 /
+                         快速脱离盘整区 / 板块未启动个股率先走强
+D. Leader Transition     原 LEADER 走弱 + CHALLENGER 快速增强；最高板断板→新
+                         承接核心；容量核心走弱→情绪核心接棒；旧主线退潮→
+                         新题材前排突然形成
+E. Breaking Catalyst     最小必要工具检查：突发政策 / 重大公告 / 产业消息 /
+                         涨价 / 订单 / 海外映射 / 突发事件
+```
+
+**禁止**每次 Radar 对全市场跑完整 mx-search / QVeris。遵循链条：`Cheap Signal → Anomaly → Deep Tool → Evidence → Discovery Decision`。
+
+### 1C.14.3 输出状态（仅三种）
+
+```
+RADAR_NO_SIGNAL    无明显异常，正常结束（不得当执行失败，同 NO_TRADE 地位）
+RADAR_WATCH        有异常但证据不足：允许写入临时候选或更新 EARLY_POOL 为 WATCHING
+RADAR_DISCOVERY    证据足够 Early Discovery Evidence：对对应 candidate 执行
+                   V1.6 Early Discovery 深分析（1C.2/1C.3）
+```
+
+Radar 本身**不得**返回 BUY / SELL / ADD / REDUCE。
+
+### 1C.14.4 Radar 与正式交易严格隔离（硬规则）
+
+**Intraday Radar ≠ Trade Execution。** Radar 只允许：发现异常、更新 EARLY_POOL、更新 Theme/Leader 状态、触发深分析。
+
+若 candidate 最终 CONFIRMED，也只是进入正式交易候选流程，后续仍必须**重新执行完整链路**：
+
+```
+市场环境 → 情绪周期 → 主线 → 个股强度 → 交易模型 → Risk Check → Position Sizing → Execution
+```
+
+Radar 永远不能绕过这一链路（与 1C.1 同源、同一硬规则）。
+
+### 1C.14.5 工具成本分层（硬规则，防工具爆炸）
+
+Radar 禁止「每 15 分钟 → 全市场完整 mx-data → 全新闻 mx-search → 全部 QVeris → 每只股票深分析」。必须按层收敛：
+
+```
+第一层  便宜/快速的市场异常扫描（涨速/量/排名/涨停家数等聚合数据）
+第二层  缩小到 Theme / Sector
+第三层  缩小到少数 Stock（≤ 1C.10 规模上限）
+第四层  才调用深工具（mx-search / QVeris / 深分析）
+```
+
+目标：`Broad Cheap Scan → Narrow → Evidence → EARLY_POOL`，**不是全市场 Deep Research**。
+
+## 1C.15 Opportunity Outcome Label（机会结果客观标签，V1.6.1）
+
+> 目的：防止「事后看涨了再说这是机会」与指标失真。标签**只能**基于预先定义的客观规则生成，禁止模型主观判断。
+
+### 1C.15.1 标签定义
+
+```
+OPPORTUNITY_VALID      观察窗口内命中预先冻结的客观规则（1C.15.4）
+OPPORTUNITY_INVALID    观察窗口内未命中任何客观规则
+OPPORTUNITY_AMBIGUOUS  数据缺失/窗口未走完/阈值未校准（不得强行计入成功或失败）
+```
+
+### 1C.15.2 Observation Window（观察窗口冻结）
+
+每个 EARLY_POOL candidate 在 `discovered_at` 时冻结一个观察窗口：
+
+- 默认 **1～3 个交易日**（与 1～5 日短线定位兼容）；
+- 窗口参数**版本化**（`observation_window_version`）；
+- **禁止**看到结果以后改变窗口。
+
+### 1C.15.3 Outcome Evidence（仅使用 discovered_at 之后的数据）
+
+至少保存：
+
+```
+discovered_price              入池时价格
+max_return_1d / max_return_3d 窗口内最大收益
+close_return_1d / close_return_3d 窗口各日收盘收益
+excess_vs_index / excess_vs_sector  相对指数/板块超额
+max_drawdown_after_discovery  发现后最大回撤
+theme_rank_change             所属题材排名变化
+leader_status_change          龙头状态变化
+trade_model_triggered         是否触发现有交易模型（#9）
+```
+
+**严格禁止 future leakage**：所有字段只取 `discovered_at` 之后的数据。
+
+### 1C.15.4 OPPORTUNITY_VALID 判定（多维客观规则，参数化版本化）
+
+满足预先冻结条件**之一**即 VALID：
+
+```
+A. 观察窗口内产生明显绝对收益
+B. 相对指数产生显著超额
+C. 相对所属板块产生显著超额
+D. 后续进入板块核心/前排，并正式触发现有交易模型（#9）
+```
+
+**具体数值阈值不由模型在复盘时临时决定**：必须参数化、版本化（`outcome_rule_version`）、记录启用日期、经 Forward Test（#40）。**若当前没有经过验证的阈值：先记录原始数据，状态标 OPPORTUNITY_AMBIGUOUS，不假装已有成熟阈值**；后续用样本校准后以 new_version + effective_from 启用。
+
+### 1C.15.5 Early Discovery Metrics 口径修正
+
+1C.9 各指标**只统计成熟标签**：
+
+```
+Early Discovery Rate      OPPORTUNITY_VALID 样本中，discovered_at 之前已进 EARLY_POOL 的比例
+Missed Opportunity Rate   OPPORTUNITY_VALID 但之前未进 EARLY_POOL 的比例
+False Positive Rate       进入 EARLY_POOL 但最终 OPPORTUNITY_INVALID 的比例
+```
+
+**AMBIGUOUS 样本不得强行计入成功或失败。**
+
+### 1C.15.6 防事后修改（硬规则）
+
+每个 candidate 入池时冻结：`discovered_at` / `discovered_price` / `expected_trigger` / `invalidation_condition` / discovery evidence / `observation_window_version` / `outcome_rule_version`。后续**禁止**修改这些历史字段来提高命中率。
+
+如规则升级：只能 `new_version` + `effective_from`，**不得回写旧样本**（与 #40.2 防事后改规则同源）。
 
 ---
 
