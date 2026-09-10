@@ -1,0 +1,6 @@
+{
+  "ownerId": "kn73m56g83j65mv3bjd848j7vn82t04f",
+  "name": "a-share-ai-opportunity-trader",
+  "version": "V1.1.0",
+  "description": "A股AI机会发现与主动交易系统最终版：以主动数据变化发现为Alpha源，通过State/Discovery/Research/Expectation/Validation/Portfolio/Execution/Learning形成连续闭环，并以强制持久化、状态迁移、工具路由、执行授权和对账协议fail-closed。"
+}
