@@ -1,0 +1,16 @@
+{
+  "decision_id": "DEC-YYYYMMDD-NNN",
+  "opportunity_id": "OPP-YYYYMMDD-NNN",
+  "action": "BUY",
+  "result": "ALLOW",
+  "trade_intent_id": "INTENT-YYYYMMDD-NNN",
+  "symbol": "600000",
+  "max_quantity": 100,
+  "price_policy": "LIMIT",
+  "persisted": true,
+  "persistence_verified_at": "",
+  "portfolio_refreshed": true,
+  "t_plus_1_passed": true,
+  "liquidity_passed": true,
+  "risk_passed": true
+}
