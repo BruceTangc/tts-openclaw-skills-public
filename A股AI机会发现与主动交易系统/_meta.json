@@ -1,6 +1,6 @@
 {
   "ownerId": "kn73m56g83j65mv3bjd848j7vn82t04f",
   "name": "a-share-ai-opportunity-trader",
-  "version": "V1.2.0",
-  "description": "A股AI机会发现与主动交易系统 V1.2 Runtime Hardening：保持主动发现架构不变，新增可执行 Execution Gate、trade_intent_id 持久幂等、UNKNOWN reconciliation 与 first_seen 独立完整性锚。妙想继续按自然语言原生 Skill 调用。"
+  "version": "V1.1.0",
+  "description": "A股AI机会发现与主动交易系统 V1.1 FINAL + Runtime Hardening：架构不变，补充可执行 Execution Gate、trade_intent_id 持久幂等、UNKNOWN reconciliation 与 first_seen 独立完整性锚；妙想继续按自然语言原生 Skill 调用。"
 }
