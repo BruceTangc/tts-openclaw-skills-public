@@ -3,10 +3,11 @@
 ```yaml
 opportunity_id: OPP-YYYYMMDD-NNN
 created_at:
-first_seen:
+first_seen: IMMUTABLE_TIMESTAMP
 source_discoveries: []
 cluster:
 stage: DISCOVERED
+last_transition_id:
 
 research:
   facts: []
@@ -51,3 +52,24 @@ next_evidence: []
 next_action:
 closed_reason:
 ```
+
+## Stage Transition Record
+
+```yaml
+transition_id: TRN-YYYYMMDD-NNN
+opportunity_id:
+timestamp:
+from_stage:
+to_stage:
+trigger:
+new_material_evidence: []
+reality_change:
+expectation_gap_change:
+market_validation_change:
+crowding_change:
+gate_result: ALLOW | BLOCK
+reason:
+persisted: false
+```
+
+禁止直接覆盖 `stage`。Transition Record 必须先成功写入，随后才更新 Opportunity 的 `stage` 与 `last_transition_id`。若写入失败，原 stage 保持不变。
