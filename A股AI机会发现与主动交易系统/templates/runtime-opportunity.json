@@ -1,0 +1,10 @@
+{
+  "opportunity_id": "OPP-YYYYMMDD-NNN",
+  "stage": "PRE_THEME",
+  "last_transition_id": "TRN-YYYYMMDD-NNN",
+  "hypothesis": {
+    "lifecycle": "ACTIVE"
+  },
+  "persisted": true,
+  "persistence_verified_at": ""
+}
