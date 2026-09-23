@@ -61,3 +61,13 @@
 - What changed this run:
 - What did not change:
 - Highest-priority item for next run:
+
+
+## Thesis 时间维度补充
+对每个重要 Thesis 建议维护：
+- horizon：预期有效期/观察周期，例如 intraday、3-10 trading days、1-3 months、6-12 months、open-ended；按事实填写，不机械套用；
+- driver：主要驱动因素；
+- last_material_change：最近一次实质变化；
+- falsification / exit condition：证伪或退出条件。
+
+horizon 不是锁定持有期，市场和证据变化后应动态更新。
