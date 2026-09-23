@@ -123,6 +123,6 @@ description: 当 Agent 需要主动发现 A 股投资机会、研究公司/产�
 若任务进一步涉及“投入多少、已有持仓怎么调整”，把研究结论交还 Agent，由 Agent 决定下一步。
 
 ## 输出最低要求
-格式可自由，但重要任务尽量包含：当前结论及置信度、关键 Reality、核心因果链、A股映射、Expectation/Pricing、支持证据、最强反方、UNKNOWN、证伪条件、什么新证据会改变判断。
+若 workspace 已安装 A股投资 Agent V2 工作制度，正式用户汇报必须遵循 `A股投资Agent工作制度/OUTPUT-TEMPLATES.md`，本 Skill 不自行发明另一套格式。研究内容至少要能支持模板中的：当前结论、关键 Reality、核心因果链、A股映射、Expectation/Pricing、支持证据、最强反方、UNKNOWN、证伪条件和下一验证点。
 
 完成后停止。不要自行编排其他 Skill，不要因为研究结论自动交易。
