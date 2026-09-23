@@ -125,4 +125,4 @@ description: 当 Agent 需要主动发现 A 股投资机会、研究公司/产�
 ## 输出最低要求
 若 workspace 已安装 A股投资 Agent V2 工作制度，正式用户汇报必须遵循 `A股投资Agent工作制度/OUTPUT-TEMPLATES.md`，本 Skill 不自行发明另一套格式。研究内容至少要能支持模板中的：当前结论、关键 Reality、核心因果链、A股映射、Expectation/Pricing、支持证据、最强反方、UNKNOWN、证伪条件和下一验证点。
 
-完成后停止。不要自行编排其他 Skill，不要因为研究结论自动交易。
+完成后把研究结论与关键证据交还 Agent。不要自行编排其他 Skill，也不要由本 Skill 直接执行交易；但 Agent 获得结论后应自主判断是否需要进一步进行组合管理并使用实际安装的妙想模拟交易能力执行，而不是默认研究结束即停止行动。
