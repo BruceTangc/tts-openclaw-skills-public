@@ -89,6 +89,6 @@ description: 当 Agent 需要复盘历史投资判断、交易、遗漏机会或
 不宜直接升级长期记忆：一次性行情、未验证猜测、普通日内流水、仅因一次盈亏产生的规则。日常事实优先留在日记忆；是否进入长期 Memory 由 Agent 按当前 OpenClaw 记忆机制决定。
 
 ## 输出最低要求
-根据任务包含：复盘范围与时点、当时信息集、当时判断/资本动作、后续真实结果、Decision Quality 与 Outcome 分离、主要正确点、主要错误及层级、行为偏误（有证据才写）、Missed Opportunity、Case/Candidate/Durable lessons、不应泛化因素、值得长期 Memory 的内容、下次具体改变什么。
+若 workspace 已安装 A股投资 Agent V2 工作制度，正式用户汇报必须遵循 `A股投资Agent工作制度/OUTPUT-TEMPLATES.md`，日复盘/周复盘使用对应模板，不自行发明格式。复盘内容至少要能支持：复盘范围与时点、当时信息集、当时判断/资本动作、后续真实结果、Decision Quality 与 Outcome 分离、主要正确点、主要错误及层级、行为偏误（有证据才写）、Missed Opportunity、Case/Candidate/Durable lessons、不应泛化因素和下一步改变。
 
 完成后停止并把结果交还 Agent。不得自动修改其他 Skill，也不得用事后结果重写历史。
