@@ -64,6 +64,8 @@ def compute_weights(draws, strategy="balanced", window=None, params=None):
 
     设计原则（Balanced 重构）：
       - hot/cold/trend 独立策略保留明显倾向（强权重重构，不再写死 1.5/1.0/0.5）。
+      - random = 严格均匀随机基线：所有号码等权 1.0，不使用任何历史频率/
+        冷热/趋势/遗漏/启发式修正（与 stat_rigor.random_baseline_pool 同口径）。
       - balanced = 均匀随机基线(base=1.0) + 弱统计修正，最大单项调整受
         ±0.05~±0.20 限制；只有统计证据可信时才弱修正：
           热号奖励 = 全局卡方显著 且 单号偏差超 Wilson CI(abnormal_high)
@@ -72,7 +74,7 @@ def compute_weights(draws, strategy="balanced", window=None, params=None):
 
     Args:
         draws: 按期号降序的开奖数据
-        strategy: balanced | hot | cold | trend
+        strategy: balanced | hot | cold | trend | random
         window: 分析窗口（None=全部）
         params: 生成器参数（由 strategy_manager.get_generator_params() 提供；
                 None 时回退到 config 默认值）
@@ -176,6 +178,9 @@ def compute_weights(draws, strategy="balanced", window=None, params=None):
             w = 1.0 + cold_weight * front_last_seen.get(n, total)
         elif strategy == "trend":
             w = (1.0 + trend_weight * 3.0) if n in rising else 1.0
+        elif strategy == "random":
+            # 严格均匀随机基线：等权，不引入任何历史/启发式修正
+            w = 1.0
         else:  # balanced：均匀基线 + 弱统计修正
             adj = 0.0
             info = front_ci.get(n) if front_ci else None
@@ -204,6 +209,9 @@ def compute_weights(draws, strategy="balanced", window=None, params=None):
             w = 1.0 + cold_weight * back_last_seen.get(n, total)
         elif strategy == "trend":
             w = (1.0 + trend_weight * 3.0) if n in rising_back else 1.0
+        elif strategy == "random":
+            # 严格均匀随机基线：等权，不引入任何历史/启发式修正
+            w = 1.0
         else:  # balanced
             adj = 0.0
             info = back_ci.get(n) if back_ci else None
@@ -485,6 +493,11 @@ def rank_candidates(pool, draws, window=None, params=None, strategy="balanced"):
     freq = _build_freq(data)  # 一次构建，全部候选复用
     scored = []
     for front, back in pool:
+        if strategy == "random":
+            # 严格均匀随机基线：不评分、不按历史频率排序（同 stat_rigor.random_baseline_pool 口径）。
+            # 若走 _combine_legacy，frequency/omission 会按历史统计挑选候选，泄漏历史偏差。
+            scored.append((front, back, 0.0))
+            continue
         scores, _ = _score_dimensions(front, back, draws, window, freq=freq, params=params)
         if strategy == "balanced":
             total = _combine_balanced(scores, cap=(params or {}).get("balanced_stat_cap"))
@@ -806,18 +819,26 @@ def generate_top_candidates(draws, strategy="balanced", top_n=10, pool_size=None
     if pool_size is None:
         pool_size = max(POOL_SIZE, top_n * 100)
 
-    pool = generate_pool(draws, strategy, pool_size, params=params)
-    ranked = rank_candidates(pool, draws, params=params, strategy=strategy)
-    filtered = filter_overlap(ranked)
-    if strategy == "balanced":
-        # 曝光校准：返回 (front, back, raw_score, adjusted_score, penalty)
-        filtered = calibrate_portfolio(filtered, top_n,
-                                       penalty_coef=(params or {}).get("exposure_penalty_coef"))
-        effects_flags = strategy_effects_for_draws(draws)
-    else:
-        # 非 balanced 无曝光惩罚：adjusted_score == raw_score, penalty == 0
-        filtered = [(f, b, s, s, 0.0) for (f, b, s) in filtered]
+    if strategy == "random":
+        # 严格均匀随机基线：不评分、不排序、不做重叠过滤/曝光校准
+        # （与 stat_rigor.random_baseline_pool 同口径：只做均匀无放回抽样）。
+        pool = generate_pool(draws, "random", max(top_n * 2, top_n), params=params)
+        random.shuffle(pool)
+        filtered = [(f, b, 0.0, 0.0, 0.0) for f, b in pool[:top_n]]
         effects_flags = None
+    else:
+        pool = generate_pool(draws, strategy, pool_size, params=params)
+        ranked = rank_candidates(pool, draws, params=params, strategy=strategy)
+        filtered = filter_overlap(ranked)
+        if strategy == "balanced":
+            # 曝光校准：返回 (front, back, raw_score, adjusted_score, penalty)
+            filtered = calibrate_portfolio(filtered, top_n,
+                                           penalty_coef=(params or {}).get("exposure_penalty_coef"))
+            effects_flags = strategy_effects_for_draws(draws)
+        else:
+            # 非 balanced 无曝光惩罚：adjusted_score == raw_score, penalty == 0
+            filtered = [(f, b, s, s, 0.0) for (f, b, s) in filtered]
+            effects_flags = None
     top = filtered[:top_n]
 
     # 归因附件：为最终返回的每个候选补充
