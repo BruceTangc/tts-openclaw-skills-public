@@ -38,6 +38,9 @@ _YEAR_END_ISSUE = {
     23: 150, 24: 152, 25: 150,}
 # 未观测年份的保守末期号参考值（未来年份，跨年点未知，用 150 兜底）
 _DEFAULT_YEAR_END = 150
+# 年度期号的合理上界：用于识别“传入值像当年期号”还是像完整 YYNNN。
+# 取已观测年度末期号的最大值（当前为 154），略留余量，防止把年份前缀误当年度序号。
+_YEARLY_MAX_NUM = max(_YEAR_END_ISSUE.values()) if _YEAR_END_ISSUE else _DEFAULT_YEAR_END
 
 
 def _at_year_end(date_str):

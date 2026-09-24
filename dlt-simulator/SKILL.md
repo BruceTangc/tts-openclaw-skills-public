@@ -16,7 +16,7 @@ author: OpenClaw
 
 ## 架构概览
 
-本 Skill 采用模块化设计，共 15 个 Python 模块：
+本 Skill 采用模块化设计，共 16 个 Python 模块：
 
 | 模块 | 职责 |
 |:--|:--|
@@ -32,8 +32,9 @@ author: OpenClaw
 | `validator.py` | 历史完整中奖组合硬过滤 |
 | `prize_checker.py` | 中奖等级判断（2026新规7奖级） |
 | `prediction.py` | 18:00 生成预测（BUY + WATCH） |
-| `review.py` | 21:30 复盘（对比开奖 + 更新策略表现） |
+| `review.py` | 22:00 复盘（对比开奖 + 更新策略表现） |
 | `bootstrap.py` | Walk-forward 回测 + Bootstrap 分析 |
+| `stat_rigor.py` | 统计严谨性：理论概率 / Random Baseline / 统一指标 / exact binomial |
 | `strategy_manager.py` | 策略版本管理（KEEP / ADJUST / REVERT） |
 
 ## 规则说明
@@ -169,7 +170,7 @@ cd ~/.openclaw/workspace-jarvis/skills/dlt-simulator/scripts && python3 predicti
 
 ## 开奖对比流程（cron 专项，命令驱动版）
 
-开奖对比 cron（周一/三/六 21:30）。**全程只执行下面列出的命令，零代码。**
+开奖对比 cron（周一/三/六 22:00）。**全程只执行下面列出的命令，零代码。**
 
 **第1步：复盘（一条命令完成：拉最新+匹配+更新策略表现）**
 ```bash
@@ -325,5 +326,7 @@ python3 test_statistical_enhancement.py
 ### 期号与权重（P1）
 - **期号跨年**：`prediction.py` `compute_next_issue()` 用真实年度末期号表（07=93、08=154…25=150、26=94）
   判断跨年，当期号达到该年末期跳次年 001。全量 2911 组相邻期号验证 100% 匹配。
-- **评分权重**：`generator.py` 删除恒为 0 的 `prize_prob`，5 项重新归一化
-  （frequency .278 / omission .222 / sum .167 / odd_even .167 / zone .167，和=1.0）。
+- **评分权重**：`generator.py` 删除恒为 0 的 `prize_prob`。⚠️ 该行描述已过期：**balanced 重构后
+  改走 `_combine_balanced`**（结构分为主 + 统计修正封顶 `balanced_stat_cap=0.15`），
+  下面那组 legacy 权重现仅用于 hot / cold / trend（frequency .278 / omission .222 / sum .167 /
+  odd_even .167 / zone .167，和=1.0）。

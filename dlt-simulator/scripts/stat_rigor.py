@@ -192,14 +192,13 @@ def evaluate_candidates(candidates, draws):
 
 
 def _is_win(fh, bh):
-    """判断 (front_hit, back_hit) 是否构成任一奖级（覆盖 2026 新规 7 奖级）。"""
-    # 逻辑：后区0命需要前区3+；后区1命需前区2+；后区2命需前区1+
-    if bh == 2:
-        return fh >= 1
-    if bh == 1:
-        return fh >= 2
-    # bh == 0
-    return fh >= 3
+    """判断 (front_hit, back_hit) 是否构成任一奖级（覆盖 2026 新规 7 奖级）。
+
+    委托 prize_checker.determine_tier，避免与其它模块的奖级表副本漂移：
+    曾出现 (0,2)（后区中2个，本属七等奖）被本函数误判为未中奖。
+    """
+    from prize_checker import determine_tier
+    return determine_tier(fh, bh) is not None
 
 
 def _empty_metrics():

@@ -262,7 +262,7 @@ def _select_effect_targets(attribution, strategy):
     """从归因结果选出本次最多改 1~2 个 Balanced 参数（数据驱动，不拍脑袋）。
 
     规则：
-      - 只有 sample_count >= ATTRIBUTION_MIN_SAMPLE 且非 INSUFFICIENT_DATA 的 effect 可入选。
+      - 只有 samples >= ATTRIBUTION_MIN_SAMPLE 且非 INSUFFICIENT_DATA 的 effect 可入选。
       - 按“表现差于随机”的方向性（负向 effect）排序，优先调负向最重的 effect。
       - 负向 effect → 小步减弱（direction = -1）；无充分证据 → 不动。绝不因表现差而调大参数。
       - 每个 effect 对应一个 balanced_* 参数；balanced_max_total_adjust 默认步长0且
@@ -271,7 +271,8 @@ def _select_effect_targets(attribution, strategy):
 
     Args:
         attribution: dict，形如 {"hot_effect": {...}, ...}，每项含
-                     sample_count / top2_success_rate（或 mean_front_hit/mean_back_hit）
+                     samples（旧键名 sample_count 亦兼容）/ top2_success_rate
+                     （或 mean_front_hit/mean_back_hit）
         strategy: 当前策略（用于读现状参数）
 
     Returns:
@@ -282,7 +283,12 @@ def _select_effect_targets(attribution, strategy):
         info = (attribution or {}).get(effect) or {}
         if not info:
             continue
-        if info.get("status") == "INSUFFICIENT_DATA" or info.get("sample_count", 0) < ATTRIBUTION_MIN_SAMPLE:
+        # 累计账户由 review._accrue_attribution 写入，样本字段名为 samples；
+        # 兼容早期文档/旧记录里的 sample_count。两者都缺则视为无样本。
+        sample_n = info.get("samples")
+        if sample_n is None:
+            sample_n = info.get("sample_count", 0)
+        if info.get("status") == "INSUFFICIENT_DATA" or sample_n < ATTRIBUTION_MIN_SAMPLE:
             continue
         # 仅当该 effect 有实际样本时才考虑；这里不做复杂因果，只用方向性：
         # top2_success_rate 明显低于随机基线(0.20)时，对应的参数需要调整。

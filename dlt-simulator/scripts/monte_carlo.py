@@ -139,24 +139,19 @@ def monte_carlo_batch(user_front, user_back, draws, iterations=None):
 
 
 def _determine_tier(fh, bh):
-    """2026新规奖级判定"""
-    tier_map = {
-        (5, 2): 1, (5, 1): 2, (5, 0): 3, (4, 2): 3,
-        (4, 1): 4, (4, 0): 5, (3, 2): 5,
-        (3, 1): 6, (2, 2): 6,
-        (3, 0): 7, (2, 1): 7, (1, 2): 7, (0, 2): 7,
-    }
-    return tier_map.get((fh, bh), None)
+    """2026新规奖级判定（委托 prize_checker，避免多处副本漂移）。"""
+    from prize_checker import determine_tier
+    return determine_tier(fh, bh)
 
 
 def _calc_prize(tier):
-    """固定奖奖金"""
-    fixed = {3: 5000, 4: 300, 5: 150, 6: 15, 7: 5}
-    if tier is None:
-        return 0
-    if tier <= 2:
-        return 0  # 浮动奖，模拟中用固定估计
-    return fixed.get(tier, 0)
+    """单注奖金（元）：委托 prize_checker.calc_prize，单一来源。
+
+    此前 tier<=2 直接返回 0（注释写“用固定估计”但未估），导致一/二等奖
+    被当成零奖金，系统性低估零模型的期望回报。现统一走 prize_checker。
+    """
+    from prize_checker import calc_prize
+    return calc_prize(tier)
 
 
 def simulate_strategy(strategy_func, draws, iterations=None):

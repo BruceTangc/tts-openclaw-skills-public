@@ -376,20 +376,30 @@ def _accrue_attribution(hist_strategy, this_attr):
     acc = hist_strategy.get("attribution", {}) or {}
     for effect in _ATTRIBUTION_KEYS:
         cur = acc.get(effect, {"samples": 0, "sum_front_hit": 0.0, "sum_back_hit": 0.0,
-                               "top2_success": 0.0, "confounded": 0})
+                               "top2_success": 0.0})
+        # 兼容旧账户：早期版本把 confounded 比例直接累加后又重复归一化，
+        # 产出负值/衰减值（已损坏）。检测到无 confounded_sum 就丢弃该字段重算。
+        if "confounded_sum" not in cur:
+            cur["confounded_sum"] = 0.0
+        if "samples" not in cur:
+            cur["samples"] = 0
         t = this_attr.get(effect) or {}
         n = t.get("samples", 0)
         cur["samples"] = cur.get("samples", 0) + n
         cur["sum_front_hit"] = cur.get("sum_front_hit", 0.0) + t.get("mean_front_hit", 0.0) * n
         cur["sum_back_hit"] = cur.get("sum_back_hit", 0.0) + t.get("mean_back_hit", 0.0) * n
         cur["top2_success"] = cur.get("top2_success", 0.0) + t.get("top2_success_rate", 0.0) * n
-        cur["confounded"] = cur.get("confounded", 0) + t.get("confounded", 0.0) * n
+        # confounded 传入的是「该期样本中与其它 effect 共现的比例」(0~1)。
+        # 必须累加绝对量（比例×样本数 → 共现计数），最后再除以总样本数得到比例；
+        # 直接对已归一化的比例反复相除会使其逐轮衰减且可为负。
+        cur["confounded_sum"] = cur.get("confounded_sum", 0.0) + t.get("confounded", 0.0) * n
         total_samples = cur["samples"]
         cur["mean_front_hit"] = round(cur.get("sum_front_hit", 0.0) / total_samples, 4) if total_samples else 0.0
         cur["mean_back_hit"] = round(cur.get("sum_back_hit", 0.0) / total_samples, 4) if total_samples else 0.0
         cur["top2_success_rate"] = round(cur.get("top2_success", 0.0) / total_samples, 4) if total_samples else 0.0
         # 该 effect 样本中与其它 effect 共现的比例（不假装分离因果）
-        cur["confounded"] = round(cur.get("confounded", 0.0) / total_samples, 4) if total_samples else 0.0
+        cur["confounded"] = (round(cur["confounded_sum"] / total_samples, 4)
+                             if total_samples else 0.0)
         if total_samples < ATTRIBUTION_MIN_SAMPLE:
             cur["status"] = "INSUFFICIENT_DATA"
         else:

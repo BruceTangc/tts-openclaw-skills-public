@@ -160,6 +160,9 @@ def bootstrap_analysis(draws, strategy="balanced", iterations=None,
     top2_accuracies = []
     any_accuracies = []
     tier_counts = Counter()
+    # 每轮实际评估的候选数（random 与策略分支都赋给 filtered，这里显式记录，
+    # 不再用 'filtered' in dir() 这种依赖变量是否已绑定的脆弱写法）
+    n_evaluated_total = 0
     # 统一评价指标累计（所有策略同一口径）
     _agg = {"mean_front_hits": 0.0, "mean_back_hits": 0.0,
             "fge3": 0.0, "fge4": 0.0, "f5": 0.0, "anywin": 0.0}
@@ -210,6 +213,7 @@ def bootstrap_analysis(draws, strategy="balanced", iterations=None,
 
         top2_accuracies.append(1 if buy_hit else 0)
         any_accuracies.append(1 if any_hit else 0)
+        n_evaluated_total += len(filtered)
         if best_tier is not None:
             tier_counts[best_tier] += 1
 
@@ -221,8 +225,8 @@ def bootstrap_analysis(draws, strategy="balanced", iterations=None,
     top2_ci = wilson_ci(sum(top2_accuracies), total_iterations)
     any_ci = wilson_ci(sum(any_accuracies), total_iterations)
 
-    # 统一指标归一化：每注每期
-    n_exposures = total_iterations * max(1, len(filtered) if 'filtered' in dir() else top_n)
+    # 统一指标归一化：每注每期（用实际累计评估次数，不用 dir() 探测变量）
+    n_exposures = n_evaluated_total if n_evaluated_total else total_iterations * max(1, top_n)
     _metric = lambda v: round(v / n_exposures, 4) if n_exposures else 0.0
 
     return {

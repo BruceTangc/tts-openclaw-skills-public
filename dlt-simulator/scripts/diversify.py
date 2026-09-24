@@ -143,7 +143,7 @@ def diversify_by_odd_even(candidates):
     return selected
 
 
-def full_diversify(candidates, target_count=10, max_front_overlap=3):
+def full_diversify(candidates, target_count=10, max_front_overlap=None):
     """
     完整多样性过滤流程
 
@@ -151,11 +151,16 @@ def full_diversify(candidates, target_count=10, max_front_overlap=3):
     2. 按重叠度过滤（主要手段）
     3. 确保至少返回 target_count 组
 
+    max_front_overlap 默认从 config.config.json 读取（None 时），与
+    generator.filter_overlap 使用同一阈值，避免同一次预测里两个“重叠”标准不一致。
+
     Returns:
         list: 多样化后的候选列表
     """
     if not candidates:
         return []
+    if max_front_overlap is None:
+        max_front_overlap = cfg["max_front_overlap"]
 
     # 直接用重叠度过滤，保留得分高的
     selected = [candidates[0]]
